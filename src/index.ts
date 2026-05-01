@@ -12,9 +12,12 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { execFile } from "child_process";
-import { existsSync, unlinkSync } from "fs";
+import {
+  existsSync, unlinkSync, readdirSync,
+  writeFileSync, readFileSync
+} from "fs";
 import { cpus, tmpdir } from "os";
-import { join } from "path";
+import { join, extname, basename } from "path";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
@@ -24,10 +27,8 @@ const execFileAsync = promisify(execFile);
 // ---------------------------------------------------------------------------
 const WHISPER_CLI_PATH =
   process.env.WHISPER_CLI_PATH ?? "C:\\whisper\\Release\\whisper-cli.exe";
-
 const WHISPER_MODEL =
   process.env.WHISPER_MODEL ?? "C:\\whisper\\models\\ggml-base.en.bin";
-
 const FFMPEG_PATH =
   process.env.FFMPEG_PATH ?? "ffmpeg";
 
@@ -35,79 +36,118 @@ const SYSTEM_THREADS = cpus().length;
 const DEFAULT_THREADS = Math.max(2, Math.floor(SYSTEM_THREADS / 2));
 const WHISPER_THREADS = parseInt(process.env.WHISPER_THREADS ?? String(DEFAULT_THREADS), 10);
 
-// Video/audio formats that need FFmpeg conversion before whisper-cli can read them
-const NEEDS_CONVERSION = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".m4a", ".ogg", ".flac"];
-const NATIVE_FORMATS = [".wav", ".mp3"];
+const SUPPORTED_EXTENSIONS = [
+  ".mp3", ".wav",
+  ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v",
+  ".m4a", ".ogg", ".flac",
+];
+const NATIVE_EXTENSIONS = [".mp3", ".wav"];
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function validatePaths(): string | null {
-  if (!existsSync(WHISPER_CLI_PATH)) {
-    return (
-      `whisper-cli.exe not found at: ${WHISPER_CLI_PATH}\n` +
-      `Check your WHISPER_CLI_PATH environment variable in claude_desktop_config.json`
-    );
-  }
-  if (!existsSync(WHISPER_MODEL)) {
-    return (
-      `Whisper model not found at: ${WHISPER_MODEL}\n` +
-      `Check your WHISPER_MODEL environment variable in claude_desktop_config.json`
-    );
-  }
+  if (!existsSync(WHISPER_CLI_PATH))
+    return `whisper-cli.exe not found at: ${WHISPER_CLI_PATH}\nCheck WHISPER_CLI_PATH in claude_desktop_config.json`;
+  if (!existsSync(WHISPER_MODEL))
+    return `Whisper model not found at: ${WHISPER_MODEL}\nCheck WHISPER_MODEL in claude_desktop_config.json`;
   return null;
 }
 
 function needsConversion(filePath: string): boolean {
-  const ext = filePath.toLowerCase().slice(filePath.lastIndexOf("."));
-  return NEEDS_CONVERSION.includes(ext);
+  return !NATIVE_EXTENSIONS.includes(extname(filePath).toLowerCase());
+}
+
+function isSupportedFile(filePath: string): boolean {
+  return SUPPORTED_EXTENSIONS.includes(extname(filePath).toLowerCase());
 }
 
 async function convertToWav(inputPath: string): Promise<string> {
   const tmpFile = join(tmpdir(), `whisper_tmp_${Date.now()}.wav`);
   await execFileAsync(FFMPEG_PATH, [
-    "-y",           // overwrite if exists
-    "-i", inputPath,
-    "-ar", "16000", // 16kHz sample rate (whisper optimal)
-    "-ac", "1",     // mono
-    "-c:a", "pcm_s16le", // 16-bit PCM WAV
-    tmpFile,
+    "-y", "-i", inputPath,
+    "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmpFile,
   ], { windowsHide: true });
   return tmpFile;
 }
 
-type OutputFormat = "text" | "timestamps" | "json";
+type OutputFormat = "text" | "timestamps" | "json" | "srt";
 
 function buildArgs(
-  filePath: string,
-  model: string,
-  language: string,
-  outputFormat: OutputFormat,
-  threads: number
+  filePath: string, model: string, language: string,
+  outputFormat: OutputFormat, threads: number
 ): string[] {
-  const args: string[] = [
-    "-m", model,
-    "-f", filePath,
-    "-l", language,
-    "-t", String(threads),
-  ];
-
-  if (outputFormat === "timestamps") {
-    // default whisper output includes timestamps
+  const args = ["-m", model, "-f", filePath, "-l", language, "-t", String(threads)];
+  if (outputFormat === "srt") {
+    args.push("-osrt", "-of", filePath.replace(/\.[^.]+$/, ""));
   } else if (outputFormat === "json") {
     args.push("-oj");
-  } else {
+  } else if (outputFormat === "text") {
     args.push("--no-timestamps");
   }
-
   return args;
+}
+
+async function transcribeSingle(
+  filePath: string, model: string, language: string,
+  outputFormat: OutputFormat, threads: number, saveToFile = false
+): Promise<{ text: string; srtPath?: string; savedTo?: string }> {
+
+  let transcribeFrom = filePath;
+  let tmpFile: string | null = null;
+
+  if (needsConversion(filePath)) {
+    tmpFile = await convertToWav(filePath);
+    transcribeFrom = tmpFile;
+  }
+
+  try {
+    const cliArgs = buildArgs(transcribeFrom, model, language, outputFormat, threads);
+    const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, cliArgs, {
+      maxBuffer: 100 * 1024 * 1024,
+      windowsHide: true,
+    });
+
+    const output = (stdout || stderr || "").trim();
+
+    if (outputFormat === "srt") {
+      const tmpSrt = transcribeFrom.replace(/\.[^.]+$/, ".srt");
+      const destSrt = filePath.replace(/\.[^.]+$/, ".srt");
+      if (tmpFile && existsSync(tmpSrt)) {
+        writeFileSync(destSrt, readFileSync(tmpSrt, "utf8"));
+        try { unlinkSync(tmpSrt); } catch { }
+      }
+      return { text: output, srtPath: destSrt };
+    }
+
+    if (saveToFile) {
+      const txtPath = filePath.replace(/\.[^.]+$/, ".txt");
+      writeFileSync(txtPath, output, "utf8");
+      return { text: output, savedTo: txtPath };
+    }
+
+    return { text: output };
+  } finally {
+    if (tmpFile && existsSync(tmpFile)) try { unlinkSync(tmpFile); } catch { }
+  }
+}
+
+function getFiles(dir: string, recursive: boolean): string[] {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory() && recursive) files.push(...getFiles(fullPath, true));
+    else if (entry.isFile() && isSupportedFile(entry.name)) files.push(fullPath);
+  }
+  return files;
 }
 
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.1.0" },
+  { name: "whisper-windows-mcp", version: "1.3.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -116,52 +156,73 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "transcribe_audio",
       description:
-        "Transcribe an audio or video file using whisper.cpp running locally on Windows. " +
-        "Natively supports mp3 and wav. " +
-        "Automatically converts video and other audio formats (mp4, mkv, avi, mov, webm, m4a, flac, ogg, etc.) " +
-        "via FFmpeg before transcription — no manual conversion needed. " +
-        "Note: long files (over 30 minutes) may take significant time and " +
-        "cannot be cancelled cleanly from Claude — use Task Manager to stop if needed.",
+        "Transcribe a single audio or video file using whisper.cpp on Windows. " +
+        "Natively supports mp3 and wav. Automatically converts mp4, mkv, avi, mov, " +
+        "webm, m4a, flac, ogg etc. via FFmpeg — no manual conversion needed. " +
+        "Can output plain text, timestamps, JSON, or SRT subtitle files. " +
+        "WARNING: files over 30 minutes cannot be cancelled cleanly from Claude — " +
+        "use Task Manager to kill the process if needed.",
       inputSchema: {
         type: "object",
         properties: {
-          file_path: {
-            type: "string",
-            description:
-              "Absolute Windows path to the file, e.g. C:\\Users\\You\\Downloads\\recording.mp4",
-          },
-          model: {
-            type: "string",
-            description:
-              "Override the default model path. Leave blank to use the model configured in WHISPER_MODEL.",
-          },
-          language: {
-            type: "string",
-            description: "Language code, e.g. en, es, fr. Defaults to en.",
-            default: "en",
-          },
+          file_path: { type: "string", description: "Absolute Windows path, e.g. C:\\Users\\You\\Downloads\\recording.mp4" },
+          model: { type: "string", description: "Override model path. Leave blank to use WHISPER_MODEL." },
+          language: { type: "string", description: "Language code, e.g. en, es, fr. Defaults to en.", default: "en" },
           output_format: {
-            type: "string",
-            enum: ["text", "timestamps", "json"],
-            description:
-              "text = plain transcript (default), timestamps = transcript with time codes, json = structured output.",
+            type: "string", enum: ["text", "timestamps", "json", "srt"],
+            description: "text = plain (default), timestamps = with time codes, json = structured, srt = subtitle file saved next to source.",
             default: "text",
           },
-          threads: {
+          threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
+          save_to_file: { type: "boolean", description: "Save transcript as .txt next to the source file.", default: false },
+        },
+        required: ["file_path"],
+      },
+    },
+    {
+      name: "transcribe_batch",
+      description:
+        "Transcribe multiple audio/video files in a folder interactively, one file at a time. " +
+        "Shows a preview of each transcript and waits for confirmation before continuing. " +
+        "Saves each transcript as a .txt file next to its source. " +
+        "Files already transcribed (with matching .txt) are shown as done and skipped. " +
+        "Supported formats: mp3, wav, mp4, mkv, avi, mov, webm, m4a, flac, ogg. " +
+        "NOTE: For large unattended batch jobs, use whisper-cli.exe directly from the command line " +
+        "— see TROUBLESHOOTING.md for the command syntax.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          folder_path: { type: "string", description: "Absolute Windows path to the folder." },
+          file_index: {
             type: "number",
-            description:
-              `Number of CPU threads to use. Defaults to ${WHISPER_THREADS} (half of your ${SYSTEM_THREADS} logical cores). ` +
-              `Increase for faster processing, decrease to keep the system responsive.`,
+            description: "Which file to process (1-based). Omit to list files first.",
           },
+          language: { type: "string", description: "Language code. Defaults to en.", default: "en" },
+          threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
+          recursive: { type: "boolean", description: "Include subfolders. Defaults to false.", default: false },
+        },
+        required: ["folder_path"],
+      },
+    },
+    {
+      name: "generate_subtitles",
+      description:
+        "Generate an SRT subtitle file for an audio or video file. " +
+        "Saved next to the source file. Load in VLC via Subtitle → Add Subtitle File. " +
+        "Supports all the same formats as transcribe_audio.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          file_path: { type: "string", description: "Absolute Windows path to the file." },
+          language: { type: "string", description: "Language code. Defaults to en.", default: "en" },
+          threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
         },
         required: ["file_path"],
       },
     },
     {
       name: "check_config",
-      description:
-        "Verify that whisper-cli.exe and the configured model file can both be found. " +
-        "Also reports thread count and FFmpeg availability. Run this first if transcription fails.",
+      description: "Verify whisper-cli.exe, model, and FFmpeg are all available. Run this first if anything fails.",
       inputSchema: { type: "object", properties: {} },
     },
   ],
@@ -175,35 +236,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // -------------------------------------------------------------------------
   if (name === "check_config") {
     const error = validatePaths();
-    if (error) {
-      return {
-        content: [{ type: "text", text: `❌ Configuration error:\n\n${error}` }],
-        isError: true,
-      };
-    }
+    if (error) return { content: [{ type: "text", text: `❌ Configuration error:\n\n${error}` }], isError: true };
 
-    // Check FFmpeg availability
     let ffmpegStatus = "✅ Found";
-    try {
-      await execFileAsync(FFMPEG_PATH, ["-version"], { windowsHide: true });
-    } catch {
-      ffmpegStatus = "⚠️  Not found — video/non-WAV formats will not work without FFmpeg in PATH";
-    }
+    try { await execFileAsync(FFMPEG_PATH, ["-version"], { windowsHide: true }); }
+    catch { ffmpegStatus = "⚠️  Not found — video/non-MP3 formats require FFmpeg in PATH"; }
 
     return {
-      content: [
-        {
-          type: "text",
-          text:
-            `✅ Configuration looks good!\n\n` +
-            `whisper-cli: ${WHISPER_CLI_PATH}\n` +
-            `Model:       ${WHISPER_MODEL}\n` +
-            `Threads:     ${WHISPER_THREADS} of ${SYSTEM_THREADS} logical cores\n` +
-            `FFmpeg:      ${ffmpegStatus}\n\n` +
-            `To change thread count, add WHISPER_THREADS to your claude_desktop_config.json env block.\n` +
-            `To use a custom FFmpeg path, add FFMPEG_PATH to the env block.`,
-        },
-      ],
+      content: [{
+        type: "text",
+        text:
+          `✅ Configuration looks good!\n\n` +
+          `whisper-cli: ${WHISPER_CLI_PATH}\n` +
+          `Model:       ${WHISPER_MODEL}\n` +
+          `Threads:     ${WHISPER_THREADS} of ${SYSTEM_THREADS} logical cores\n` +
+          `FFmpeg:      ${ffmpegStatus}\n\n` +
+          `Optional env vars: WHISPER_THREADS, FFMPEG_PATH`,
+      }],
     };
   }
 
@@ -215,102 +264,141 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const model = (args?.model as string) || WHISPER_MODEL;
     const language = (args?.language as string) || "en";
     const outputFormat = ((args?.output_format as string) || "text") as OutputFormat;
-    const threads = Math.min(
-      SYSTEM_THREADS,
-      Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS))
-    );
+    const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
+    const saveToFile = (args?.save_to_file as boolean) || false;
 
-    if (!filePath) {
-      return {
-        content: [{ type: "text", text: "file_path is required." }],
-        isError: true,
-      };
-    }
-
-    if (!existsSync(filePath)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              `File not found: ${filePath}\n\n` +
-              `Make sure the path uses backslashes and is absolute, ` +
-              `e.g. C:\\Users\\You\\Downloads\\audio.mp3`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
+    if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
+    if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
-    if (configError) {
-      return {
-        content: [{ type: "text", text: configError }],
-        isError: true,
-      };
-    }
+    if (configError) return { content: [{ type: "text", text: configError }], isError: true };
 
-    // Convert to WAV via FFmpeg if needed
-    let transcribeFrom = filePath;
-    let tmpFile: string | null = null;
-    const converting = needsConversion(filePath);
-
-    if (converting) {
-      try {
-        tmpFile = await convertToWav(filePath);
-        transcribeFrom = tmpFile;
-      } catch (err: any) {
-        const msg = err?.stderr || err?.message || String(err);
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `FFmpeg conversion failed:\n\n${msg}\n\n` +
-                `Make sure FFmpeg is installed and in your system PATH.\n` +
-                `Download from https://ffmpeg.org/download.html\n` +
-                `Or convert to MP3 manually using VLC (Media → Convert/Save → Audio - MP3).`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-
-    // Run whisper-cli
     try {
-      const cliArgs = buildArgs(transcribeFrom, model, language, outputFormat, threads);
-      const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, cliArgs, {
-        maxBuffer: 100 * 1024 * 1024,
-        windowsHide: true,
-      });
-
-      const output = stdout || stderr || "(no output)";
-      const note = converting
-        ? "\n\n[Automatically converted from video/audio format via FFmpeg before transcription]"
-        : "";
-
-      return { content: [{ type: "text", text: output.trim() + note }] };
+      const result = await transcribeSingle(filePath, model, language, outputFormat, threads, saveToFile);
+      let response = result.text;
+      if (result.savedTo) response += `\n\n[Transcript saved to: ${result.savedTo}]`;
+      if (result.srtPath) response += `\n\n[SRT subtitle file saved to: ${result.srtPath}]`;
+      return { content: [{ type: "text", text: response }] };
     } catch (err: any) {
-      const message = err?.stderr || err?.stdout || err?.message || String(err);
-      return {
-        content: [
-          { type: "text", text: `Transcription failed:\n\n${message}` },
-        ],
-        isError: true,
-      };
-    } finally {
-      // Always clean up temp file
-      if (tmpFile && existsSync(tmpFile)) {
-        try { unlinkSync(tmpFile); } catch { /* ignore cleanup errors */ }
-      }
+      return { content: [{ type: "text", text: `Transcription failed:\n\n${err?.stderr || err?.message || String(err)}` }], isError: true };
     }
   }
 
-  return {
-    content: [{ type: "text", text: `Unknown tool: ${name}` }],
-    isError: true,
-  };
+  // -------------------------------------------------------------------------
+  // generate_subtitles
+  // -------------------------------------------------------------------------
+  if (name === "generate_subtitles") {
+    const filePath = args?.file_path as string;
+    const language = (args?.language as string) || "en";
+    const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
+
+    if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
+    if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
+    const configError = validatePaths();
+    if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+
+    try {
+      const result = await transcribeSingle(filePath, WHISPER_MODEL, language, "srt", threads, false);
+      return {
+        content: [{
+          type: "text",
+          text:
+            `✅ Subtitle file generated!\n\n` +
+            `Saved to: ${result.srtPath}\n\n` +
+            `To use in VLC: Subtitle → Add Subtitle File → select the .srt file.\n` +
+            `Works in any video player that supports external subtitles.`,
+        }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Subtitle generation failed:\n\n${err?.stderr || err?.message || String(err)}` }], isError: true };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // transcribe_batch (interactive only)
+  // -------------------------------------------------------------------------
+  if (name === "transcribe_batch") {
+    const folderPath = args?.folder_path as string;
+    const language = (args?.language as string) || "en";
+    const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
+    const recursive = (args?.recursive as boolean) || false;
+    const fileIndex = args?.file_index as number | undefined;
+
+    if (!folderPath) return { content: [{ type: "text", text: "folder_path is required." }], isError: true };
+    if (!existsSync(folderPath)) return { content: [{ type: "text", text: `Folder not found: ${folderPath}` }], isError: true };
+    const configError = validatePaths();
+    if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+
+    const files = getFiles(folderPath, recursive);
+
+    if (files.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: `No supported files found in: ${folderPath}\nSupported formats: ${SUPPORTED_EXTENSIONS.join(", ")}`,
+        }],
+      };
+    }
+
+    // No file_index: return file list
+    if (fileIndex === undefined) {
+      return {
+        content: [{
+          type: "text",
+          text:
+            `Found ${files.length} file(s) in: ${folderPath}\n\n` +
+            files.map((f, i) => {
+              const txtPath = f.replace(/\.[^.]+$/, ".txt");
+              const done = existsSync(txtPath) ? " ✅ already done" : "";
+              return `  ${i + 1}. ${basename(f)}${done}`;
+            }).join("\n") +
+            `\n\nTo start, say "transcribe file 1" (or any number). I'll process one file at a time and wait for your go-ahead before continuing.\n` +
+            `\nFor large unattended batches, see the command line approach in TROUBLESHOOTING.md.`,
+        }],
+      };
+    }
+
+    // Process the requested file
+    const idx = fileIndex - 1;
+    if (idx < 0 || idx >= files.length) {
+      return { content: [{ type: "text", text: `Invalid file number. Choose between 1 and ${files.length}.` }], isError: true };
+    }
+
+    const filePath = files[idx];
+    const fileName = basename(filePath);
+    const txtPath = filePath.replace(/\.[^.]+$/, ".txt");
+
+    try {
+      const result = await transcribeSingle(filePath, WHISPER_MODEL, language, "text", threads, true);
+      const remaining = files.length - fileIndex;
+      const nextMsg = remaining > 0
+        ? `\n\n${remaining} file(s) remaining. Say "continue" or "transcribe file ${fileIndex + 1}" to proceed, or "stop" to finish.`
+        : `\n\n✅ That was the last file. Batch complete!`;
+
+      return {
+        content: [{
+          type: "text",
+          text:
+            `[${fileIndex}/${files.length}] ✅ ${fileName}\n\n` +
+            `Saved to: ${txtPath}\n\n` +
+            `Preview:\n${result.text.slice(0, 500)}${result.text.length > 500 ? "..." : ""}` +
+            nextMsg,
+        }],
+      };
+    } catch (err: any) {
+      return {
+        content: [{
+          type: "text",
+          text:
+            `[${fileIndex}/${files.length}] ❌ Failed: ${fileName}\n\n` +
+            `Error: ${err?.stderr || err?.message || String(err)}\n\n` +
+            `Say "transcribe file ${fileIndex + 1}" to skip and continue.`,
+        }],
+        isError: true,
+      };
+    }
+  }
+
+  return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
 });
 
 // ---------------------------------------------------------------------------
@@ -319,9 +407,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(
-    `whisper-windows-mcp v1.1.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`
-  );
+  console.error(`whisper-windows-mcp v1.3.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {
