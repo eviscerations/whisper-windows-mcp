@@ -1,0 +1,40 @@
+{
+  "name": "whisper-windows-mcp",
+  "version": "1.0.0",
+  "description": "Windows-native MCP server for local audio transcription using whisper.cpp — works with Claude Desktop on Windows",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "whisper-windows-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "whisper",
+    "whisper.cpp",
+    "transcription",
+    "speech-to-text",
+    "windows",
+    "claude",
+    "claude-desktop",
+    "model-context-protocol",
+    "audio",
+    "local"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
