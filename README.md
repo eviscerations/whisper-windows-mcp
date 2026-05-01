@@ -3,7 +3,7 @@
 A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop transcribe audio files locally using [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — no internet connection required, no data sent to the cloud.
 
 > **Why does this exist?**
-> The popular `whisper-mcp` package was built for macOS and assumes a Unix environment. It does not work on Windows. This package was written specifically for Windows users who want the same functionality.
+> The popular `whisper-mcp` package was built for macOS and assumes a Unix environment. It does not work on Windows. This package was written specifically for Windows users who want the same local transcription functionality in Claude Desktop.
 
 ---
 
@@ -12,7 +12,7 @@ A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop tr
 Once installed, you can say things like this directly in Claude Desktop:
 
 - *"Transcribe C:\Users\Me\Downloads\meeting.mp3"*
-- *"Transcribe this recording and give me a summary"*
+- *"Transcribe this recording and summarise the key points"*
 - *"Transcribe with timestamps so I can find specific moments"*
 
 Everything runs on your own machine. No audio ever leaves your computer.
@@ -21,67 +21,61 @@ Everything runs on your own machine. No audio ever leaves your computer.
 
 ## Requirements
 
-Before installing this package, you need three things set up on your Windows machine:
+You need the following installed before proceeding. Each one is free.
 
-1. **Node.js 18 or later** — [download from nodejs.org](https://nodejs.org)
-2. **whisper.cpp** — the actual transcription engine
-3. **A Whisper model file** — the AI model that does the transcription
-
-The sections below walk you through each one.
+| Requirement | Purpose |
+|---|---|
+| [Node.js 18+](https://nodejs.org/en/download) | Runs the MCP server |
+| [whisper.cpp](https://github.com/ggerganov/whisper.cpp/releases/latest) | The transcription engine |
+| A Whisper model file | The AI model (downloaded in Step 2) |
 
 ---
 
 ## Step 1 — Install whisper.cpp
 
-1. Go to the [whisper.cpp releases page](https://github.com/ggerganov/whisper.cpp/releases)
-2. Download the latest Windows ZIP (look for a file ending in `-win-x64.zip` or similar)
-3. Extract it to a simple path with no spaces — recommended: `C:\whisper\Release\`
+1. Go to the [whisper.cpp latest release](https://github.com/ggerganov/whisper.cpp/releases/latest)
+2. Download the file named **`whisper-bin-x64.zip`** (look for `win` and `x64` in the filename)
+3. Extract the ZIP and move the contents to **`C:\whisper\Release\`** — create this folder if it doesn't exist
 
-You should now have `C:\whisper\Release\whisper-cli.exe` on your system.
+✅ You should now have **`C:\whisper\Release\whisper-cli.exe`**
+
+> **Why this path?** You can install whisper.cpp anywhere, but `C:\whisper\Release\` matches the default config below and means less to edit later.
 
 ---
 
 ## Step 2 — Download a Whisper model
 
-Models are downloaded from Hugging Face. Choose one based on your needs:
+The model is the AI that does the actual transcription. Click a link below to download directly:
 
-| Model | File size | Speed | Accuracy | Recommended for |
+| Model | Download | Size | Speed | Best for |
 |---|---|---|---|---|
-| `ggml-tiny.en.bin` | 75 MB | Very fast | Basic | Quick tests |
-| `ggml-base.en.bin` | 142 MB | Fast | Good | Everyday use |
-| `ggml-small.en.bin` | 466 MB | Moderate | Better | Important recordings |
-| `ggml-medium.en.bin` | 1.5 GB | Slow | Very good | Best quality on CPU |
-| `ggml-large-v3.bin` | 2.9 GB | Very slow | Excellent | Maximum accuracy |
+| tiny.en | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin) | 75 MB | Very fast | Quick tests |
+| **base.en** | [**Download**](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin) | 142 MB | Fast | **Recommended starting point** |
+| small.en | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin) | 466 MB | Moderate | Better accuracy |
+| medium.en | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin) | 1.5 GB | Slow | High accuracy |
+| large-v3 | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin) | 2.9 GB | Very slow | Maximum accuracy |
 
-**For most people, `base.en` or `small.en` is the best starting point.**
+Save the downloaded `.bin` file to **`C:\whisper\models\`** — create this folder if it doesn't exist.
 
-Download your chosen model from:
-```
-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
-```
-(Replace `ggml-base.en.bin` with whichever model you want.)
-
-Save it to `C:\whisper\models\` — create that folder if it doesn't exist.
+✅ You should now have something like **`C:\whisper\models\ggml-base.en.bin`**
 
 ---
 
-## Step 3 — Install this MCP server
+## Step 3 — Install Node.js
 
-Open Command Prompt and run:
+If you don't already have Node.js:
 
-```
-npm install -g whisper-windows-mcp
-```
+1. Go to [nodejs.org](https://nodejs.org/en/download) and download the **Windows Installer (.msi)** — choose the LTS version
+2. Run the installer and accept all defaults
 
-Or if you prefer to run it without installing globally, you can use `npx` directly in your config (see Step 4).
+✅ To verify, open Command Prompt and run `node --version` — you should see something like `v20.x.x`
 
 ---
 
 ## Step 4 — Configure Claude Desktop
 
-1. Open Claude Desktop
-2. Go to **Settings → Developer → Edit Config**
-3. Add the whisper-windows-mcp entry to your config file:
+1. Open Claude Desktop → **Settings → Developer → Edit Config**
+2. Add the following (or merge the `mcpServers` block if you already have other servers):
 
 ```json
 {
@@ -98,11 +92,11 @@ Or if you prefer to run it without installing globally, you can use `npx` direct
 }
 ```
 
-> **Important:** If your `claude_desktop_config.json` already has other content (like `"preferences"`), add the `"mcpServers"` block inside the existing `{}` — don't replace the whole file. See the [full config example](#full-config-example) below.
+> ⚠️ **Path format:** In the JSON config, all backslashes must be doubled (`\\`). This is a JSON requirement. When typing paths into Claude in chat, use normal single backslashes.
 
-4. Save the file
-5. Fully quit Claude Desktop and reopen it
-6. Go to **Settings → Developer** — you should see **whisper** listed with a green **running** badge
+3. If you downloaded a different model, update `ggml-base.en.bin` to match your filename
+4. Save the file, fully quit Claude Desktop, and reopen it
+5. Go to **Settings → Developer** — you should see **whisper** with a green **running** badge
 
 ---
 
@@ -112,29 +106,29 @@ In Claude Desktop, type:
 
 > *"Can you check your whisper config?"*
 
-Claude will use the `check_config` tool to verify that `whisper-cli.exe` and your model file are both found correctly before attempting a transcription.
-
-Then try a real transcription:
+Claude will verify that `whisper-cli.exe` and your model file are both found. Then try:
 
 > *"Please transcribe C:\Users\YourName\Downloads\recording.mp3"*
 
 ---
 
-## Converting video to audio before transcribing
+## Converting video files to audio
 
-Whisper works on audio. If you have a video file (MP4, MKV, etc.), you'll want to extract the audio first — audio-only files are much smaller and process faster.
+Whisper processes audio. If you have a video file (MP4, MKV, etc.) you may want to extract the audio first — audio-only files are much smaller and faster to process.
 
-**Using VLC Media Player (free, easy, recommended):**
+> **Tip:** whisper.cpp may handle MP4 files directly if FFmpeg is installed. Try transcribing an MP4 first before converting.
 
-1. Open VLC → **Media → Convert / Save**
-2. Click **Add** and select your video file
-3. Click **Convert / Save**
+**Using VLC Media Player** (free, recommended for beginners):
+
+1. Download [VLC](https://www.videolan.org/vlc/) if you don't have it
+2. Open VLC → **Media → Convert / Save**
+3. Click **Add**, select your video, then click **Convert / Save**
 4. Under **Profile**, choose **Audio - MP3**
-5. Set a destination file name and click **Start**
+5. Set a destination filename and click **Start**
 
-VLC will extract the audio track as an MP3. A 1-hour video that might be 2–4 GB as MP4 typically becomes 50–100 MB as MP3.
+A 1-hour MP4 that might be 2–4 GB typically becomes a 50–100 MB MP3.
 
-**Using FFmpeg (command line, for advanced users):**
+**Using FFmpeg** (command line, for advanced users):
 ```
 ffmpeg -i "C:\path\to\video.mp4" -vn -ac 1 -ar 16000 "C:\path\to\output.wav"
 ```
@@ -143,19 +137,33 @@ ffmpeg -i "C:\path\to\video.mp4" -vn -ac 1 -ar 16000 "C:\path\to\output.wav"
 
 ## Output formats
 
-When asking Claude to transcribe, you can specify:
+| Format | What you get | Ask Claude... |
+|---|---|---|
+| `text` (default) | Plain transcript, no timestamps | *"Transcribe this file"* |
+| `timestamps` | Transcript with `[00:00:00 --> 00:00:05]` time codes | *"Transcribe with timestamps"* |
+| `json` | Structured data | *"Transcribe as JSON"* |
 
-- **text** (default) — plain transcript, no timestamps
-- **timestamps** — transcript with `[00:00:00 --> 00:00:05]` time codes, useful for finding specific moments
-- **json** — structured output for developers
+---
 
-Example: *"Transcribe this file with timestamps: C:\Users\Me\Downloads\interview.mp3"*
+## Transcription speed
+
+Whisper runs on CPU by default. Rough estimates for a 1-hour recording:
+
+| Model | Approximate time (CPU) |
+|---|---|
+| tiny.en | 5–10 minutes |
+| base.en | 10–20 minutes |
+| small.en | 20–35 minutes |
+| medium.en | 35–60 minutes |
+| large-v3 | 60–120 minutes |
+
+> **GPU acceleration** for AMD (ROCm) and NVIDIA (CUDA) on Windows is planned for a future update.
 
 ---
 
 ## Full config example
 
-If you have other MCP servers configured, your full `claude_desktop_config.json` might look like this:
+If you have other MCP servers already configured:
 
 ```json
 {
@@ -175,41 +183,44 @@ If you have other MCP servers configured, your full `claude_desktop_config.json`
 }
 ```
 
-The config file is located at:
+Config file location:
 ```
 C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.json
 ```
 
+> The `AppData` folder is hidden by default. To show it: File Explorer → **View → Show → Hidden items**
+
 ---
 
-## Transcription speed
+## Tested on
 
-Whisper runs on your CPU by default. Rough estimates for a 1-hour recording:
-
-| Model | Approximate time (CPU) |
-|---|---|
-| tiny.en | 5–10 minutes |
-| base.en | 10–20 minutes |
-| small.en | 20–35 minutes |
-| medium.en | 35–60 minutes |
-
-These vary significantly based on your processor. A modern CPU with 8+ cores will be faster than these estimates.
-
-> **GPU acceleration** for AMD cards (like the Radeon RX Vega series) via ROCm is not yet covered in this guide but may be added in a future update.
+- Windows 10 Pro (10.0.19045)
+- Windows 11 — untested, feedback welcome via [Issues](../../issues)
 
 ---
 
 ## Troubleshooting
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed solutions to common problems.
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed solutions.
 
-Quick checklist if something isn't working:
+Quick checklist:
 
-- [ ] Paths in the config use **double backslashes** (`C:\\whisper\\...`)
-- [ ] `whisper-cli.exe` exists at the path you specified
-- [ ] The model `.bin` file exists at the path you specified
-- [ ] Claude Desktop was fully restarted after editing the config
-- [ ] The whisper server shows **running** (not an error) in Settings → Developer
+- [ ] Config paths use **double backslashes** (`C:\\whisper\\...`)
+- [ ] `whisper-cli.exe` exists at the path specified
+- [ ] The model `.bin` file exists at the path specified
+- [ ] Claude Desktop was **fully restarted** after editing the config
+- [ ] Whisper shows **running** in Settings → Developer
+
+---
+
+## Roadmap
+
+- [ ] SRT subtitle output
+- [ ] Direct MP4/video file support via FFmpeg
+- [ ] Translation to English from other languages
+- [ ] AMD GPU acceleration (ROCm)
+- [ ] NVIDIA GPU acceleration (CUDA)
+- [ ] Speaker diarization (automatic speaker identification)
 
 ---
 
@@ -221,4 +232,4 @@ MIT — free to use, modify, and distribute.
 
 ## Contributing
 
-Pull requests welcome. If you've worked out GPU acceleration for AMD or NVIDIA on Windows, please open an issue or PR — it would be a valuable addition.
+Pull requests welcome. GPU acceleration solutions for AMD or NVIDIA especially appreciated. Windows 11 feedback welcome via Issues.
