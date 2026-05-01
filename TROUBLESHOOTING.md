@@ -128,7 +128,7 @@ This is only required inside the JSON config file. When typing paths directly in
 
 ## Still stuck?
 
-Open an issue at [github.com/your-username/whisper-windows-mcp/issues](https://github.com/your-username/whisper-windows-mcp/issues) and include:
+Open an issue at [github.com/eviscerations/whisper-windows-mcp/issues](https://github.com/eviscerations/whisper-windows-mcp/issues) and include:
 
 - Your Windows version
 - The contents of your `claude_desktop_config.json` (remove any personal info)
