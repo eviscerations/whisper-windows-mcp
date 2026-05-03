@@ -7,102 +7,91 @@ Current version: **v1.9.0**
 ## Completed
 
 ### ✅ v1.3.1 — Process Lock (Priority 2)
-Added `isWhisperRunning()` check using `tasklist /FI` before any transcription spawn. If `whisper-cli.exe` is already running, returns a clear error with Task Manager instructions rather than spawning a competing process.
+Added `isWhisperRunning()` check using `tasklist /FI` before any transcription spawn. Returns a clear error with Task Manager instructions rather than spawning a competing process.
 
 ### ✅ v1.4.0 — Vulkan GPU Acceleration (Priority 1)
-Compiled whisper.cpp from source with `-DGGML_VULKAN=ON` using VS Build Tools 2026 and Vulkan SDK 1.4.341.1. Pre-built Vulkan binaries distributed as a release asset (`whisper-vulkan-win-x64.zip`).
+Compiled whisper.cpp from source with `-DGGML_VULKAN=ON` using VS Build Tools 2026 and Vulkan SDK 1.4.341.1. Pre-built Vulkan binaries distributed as `whisper-vulkan-win-x64.zip`.
 
-**Results on AMD Radeon RX Vega 56:** GPU utilization ~16%, CPU drops from ~55% to ~15%. A 5-minute file completes in 20–40 seconds instead of 8–12 minutes on CPU.
-
-The official whisper.cpp Windows releases do not include a Vulkan build. The pre-built release in this repo fills that gap for AMD and Intel GPU users.
+**Results on AMD Radeon RX Vega 56:** ~16% GPU utilization. A 58-minute file completes in ~4.5 minutes on GPU vs ~88 minutes CPU-only.
 
 ### ✅ v1.5.0 — System Diagnostics (Priority 9)
-New `check_system` tool: detects GPU via `wmic path win32_VideoController`, checks for `ggml-vulkan.dll`, reports VRAM, recommends model size, and gives actionable guidance if GPU binary is missing.
-
-Note: `wmic` reports half the physical VRAM on AMD cards due to a Windows registry limitation. The tool notes this in its output.
+`check_system` tool: GPU detection via `wmic`, Vulkan DLL verification, VRAM reporting, model size recommendation.
 
 ### ✅ v1.6.0 — File Pre-Analysis (Priority 3)
-New `analyze_media` tool using FFprobe. Single file or folder scan returns duration, size, codec, bitrate, transcription status, and estimated time on CPU and GPU. Folder results are sortable by duration, name, or size.
+`analyze_media` tool via FFprobe: duration, size, codec, transcription status, CPU and GPU time estimates. Single file or folder scan with sort options.
 
 ### ✅ v1.7.0 — Background Transcription + Progress Visibility (Priorities 4 + 5)
-Rearchitected transcription to support fully detached background processes:
-- `transcribe_audio` now accepts `background=true` — spawns whisper as a detached process, writes a `job.json` state file, returns a job ID immediately (never blocks)
-- New `check_progress` tool reads the job file, checks PID liveness, parses whisper's stderr segment timestamps (`[00:01:30 --> 00:01:35]`), and returns percentage complete, elapsed time, and transcript on completion
-- Eliminates the 4-minute Claude MCP timeout problem entirely for long files
+Detached process architecture: `transcribe_audio` with `background=true` spawns whisper as a detached process and returns a job ID immediately. `check_progress` parses whisper's stderr segment timestamps for real-time percentage and ETA.
 
 ### ✅ v1.8.0 — Sequential Batch with Validation (Priority 6)
-New `start_batch` and `check_batch_progress` tools:
-- `start_batch` scans a folder for untranscribed files, sorts by duration, and spawns the first job as a detached process
-- `check_batch_progress` automatically validates each completed transcript (empty or suspiciously short outputs are flagged), advances to the next file, and reports overall progress with per-file timestamps
-- Validation checks: output exists, is non-empty, line count proportional to audio duration
-- 8 files / 8 minutes of audio completed in ~2.5 minutes on GPU
+`start_batch` and `check_batch_progress`: automated sequential processing, transcript validation (empty/short output detection), automatic queue advancement, per-file progress timestamps.
 
 ### ✅ v1.9.0 — Multilingual Support and Translation (Priority 7)
-Updated `generate_subtitles` with full multilingual support:
-- `language=auto` triggers whisper's language auto-detection (30-second probe)
-- `translate_to_english=true` runs a second whisper pass with `--translate` flag
-- Dual output: `filename.ja.srt` (native) + `filename.en.srt` (English translation)
-- Added `.3gp` and `.ts` format support
-- `language=auto` also supported in `transcribe_audio`
+`generate_subtitles` with `language=auto` detection and `translate_to_english=true` dual-SRT output. Added `.3gp` and `.ts` format support. `language=auto` also available in `transcribe_audio`.
 
-**Known limitation:** Whisper's built-in translation only targets English. Translating to other languages requires a separate translation step not currently implemented.
+**Known limitation:** Whisper's built-in translation targets English only. Requires `large-v3` model for non-English languages — English-only models (`*.en.bin`) output `[FOREIGN]` on non-English audio.
 
 ---
 
-## In Progress / Planned
+## Known Bugs (Next Release)
+
+### Unicode / Special Character Filenames
+Files with Unicode characters (Japanese, Chinese, emoji, brackets) in the filename cause background transcription to silently fail — whisper runs to completion but cannot write the output file to the path.
+
+**Fix:** Route output through a sanitized temp path derived from a hash or job ID, then move the result to the correct destination after completion. Never pass the raw source path as the `-of` argument.
+
+### SRT Output Not Supported in Background Mode
+`spawnDetached` hardcodes `-otxt`. `generate_subtitles` blocks synchronously, which hits the 4-minute MCP timeout on files longer than ~4 minutes.
+
+**Fix:** Add `outputFormat` parameter to `spawnDetached`. Background mode should support `text`, `srt`, and `timestamps` output formats.
+
+---
+
+## Planned
 
 ### Priority 8 — Filename-Based References Throughout
-All tool outputs should reference the full source filename rather than positional indices. Affects batch listings, progress reports, and error messages.
-
-**Status:** Partially implemented. Full audit needed across all tools.
+All tool outputs should reference the full source filename rather than positional indices. Affects batch listings, progress reports, and error messages. Full audit needed.
 
 ---
 
 ### Speaker Diarization
-Identify speaker changes in transcripts — not necessarily by name, but marking transitions (e.g. `[Speaker A]`, `[Speaker B]`). Useful for interviews, panel discussions, court recordings.
+Identify speaker transitions in transcripts — marking changes without necessarily naming speakers (e.g. `[Speaker A]`, `[Speaker B]`). Useful for interviews, panels, court recordings.
 
-**Implementation:** Requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python-based speaker diarization library. Needs a Hugging Face account and model access token. This is a separate dependency stack from the current whisper.cpp pipeline.
+**Implementation:** Requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python-based speaker diarization library requiring a Hugging Face account and model access token. Separate dependency stack from the current whisper.cpp pipeline.
 
 **Status:** Planned as an optional advanced feature with separate setup documentation. Not in the main package.
 
 ---
 
 ### Video Project Workflow Tools (Premiere prep)
-Tools for users managing large video editing projects. Designed around the following workflow:
+Tools for users managing large video editing projects:
 
-1. Source clips in a parent directory (OBS recordings, downloaded clips, etc.)
-2. Edited clips in a `./clips/` subdirectory, derived from sources in the parent
-3. Transcription of both directories
-4. Transcript text alignment to identify where edited clips appear in the source (timestamp positioning)
-5. Semi-automated rename of edited clips with Claude-suggested descriptors, requiring explicit user confirmation before any rename executes
-6. Transcript search across a project directory
-
-**Naming convention under discussion:** Preserve source filename information, append subject identifier and optional source timestamp range. Example: `MARKIPLIER_2026-01-11 10-13-22_src-4m12s_keemstar-sourcing.mp4`
+1. Source clips in a parent directory
+2. Edited clips in a `./clips/` subdirectory
+3. Transcript text alignment — identify where edited clips appear in the source by fuzzy-matching transcript text
+4. Semi-automated rename with Claude-suggested descriptors, requiring explicit user confirmation before any rename executes
+5. Transcript search across a project directory
 
 **Design principles:**
 - Source files are **never renamed or modified**
 - All renames require **explicit user confirmation**
-- Works with existing directory structure, does not create directories without asking
-- Search is a standalone tool that works on any directory with paired .txt transcript files
+- Search is a standalone tool, usable independently
 
 **Status:** Design phase. Implementation pending real-world directory examples.
 
 ---
 
 ### Translation to Non-English Languages
-Whisper's built-in `--translate` flag only targets English. Supporting arbitrary target languages (e.g. Japanese → German) would require integrating an external translation API or a local translation model, which conflicts with the local-first design principle.
+Whisper's `--translate` flag only targets English. Supporting arbitrary target languages (e.g. Japanese → German) requires an external translation API or local translation model.
 
-**Options under consideration:**
-- LibreTranslate (self-hostable, free)
-- Integration with a locally-running LLM for translation
-- Out-of-scope documentation pointing users to external tools
+**Options under consideration:** LibreTranslate (self-hostable), local LLM translation, or out-of-scope documentation.
 
-**Status:** Deferred. Requires design decision on local-first vs API dependency.
+**Status:** Deferred pending design decision on local-first vs API dependency.
 
 ---
 
 ### Transcript Cleanup and Formatting
-Post-processing transcripts for easier reading and clip scanning:
+Post-processing for easier reading and clip scanning:
 - Remove filler words and false starts (optional, user-controlled)
 - Paragraph breaks at natural topic boundaries
 - Speaker-aware formatting when combined with diarization
@@ -112,22 +101,33 @@ Post-processing transcripts for easier reading and clip scanning:
 
 ---
 
+### Multilingual Documentation
+Japanese documentation (`README.ja.md`) is complete. Additional translations planned:
+- `TROUBLESHOOTING.ja.md`
+- `ROADMAP.ja.md`
+
+Community contributions for other languages welcome.
+
+---
+
 ## Design Principles
 
-**Minimize Claude API usage.** Every MCP tool call consumes from the user's usage limit. The entire transcription workflow — scan, analyze, queue, run, validate — should require fewer than 20 Claude interactions for a 60-file batch. Free-tier users should be able to use this tool effectively.
+**Minimize Claude API usage.** The transcription workflow — scan, analyze, queue, run, validate — should require fewer than 20 Claude interactions for a 60-file batch. Free-tier users should be able to use this tool effectively.
 
-**One whisper instance at all times.** Never spawn a second process while one is running. Enforced unconditionally via process lock.
+**One whisper instance at all times.** Never spawn a second process while one is running.
 
-**Local-first, private by default.** No audio leaves the machine. No cloud APIs required for core functionality. This is a feature, not a limitation.
+**Local-first, private by default.** No audio leaves the machine. No cloud APIs required for core functionality.
 
-**Modular and composable.** Tools are independent — an attorney transcribing a single court recording doesn't need batch processing. A video editor doesn't need subtitle generation. Users use what they need.
+**Modular and composable.** Tools are independent. Users use what they need.
 
-**Explicit user control.** No silent bulk operations. Destructive or irreversible actions (renames, deletes) always require confirmation.
+**Explicit user control.** No silent bulk operations. Destructive or irreversible actions require confirmation.
+
+**Unicode-safe paths.** All file I/O must handle non-ASCII filenames correctly, including Japanese, Chinese, emoji, and special characters.
 
 ---
 
 ## Contributing
 
-Pull requests welcome for any of the above priorities. Check existing issues before starting work.
+Pull requests welcome. Check existing issues before starting work.
 
-If you've tested GPU acceleration on hardware not listed above, please open an issue with your GPU model, VRAM, model size used, and observed throughput.
+If you've tested GPU acceleration on hardware not listed above, please open an issue with your GPU model, VRAM, model size, and observed throughput.

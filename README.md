@@ -78,7 +78,7 @@ Copy the binaries from `build\bin\Release\` to `C:\whisper\Release\`.
 | `ggml-large-v3.bin` | 2.9 GB | Fast on GPU | Excellent | Multilingual, best accuracy |
 
 For **English-only** use: `base.en` or `medium.en` are the best starting points.
-For **multilingual** use (auto-detect, foreign language, translation): use `large-v3` for best results.
+For **multilingual** use (auto-detect, foreign language, translation): `large-v3` is **required**. English-only models (`*.en.bin`) output `[FOREIGN]` on non-English audio and cannot be used for other languages.
 
 Download from Hugging Face:
 ```

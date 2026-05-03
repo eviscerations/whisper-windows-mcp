@@ -69,13 +69,34 @@ If you installed FFmpeg to a non-standard location, set the `FFMPEG_PATH` enviro
 
 ---
 
+## Transcript output is full of `[FOREIGN]` tags
+
+**Cause:** You are using an English-only model (e.g. `ggml-medium.en.bin`) on non-English audio. English-only models cannot process other languages and output `[FOREIGN]` as a placeholder for every segment they cannot handle.
+
+**Fix:** Download and use `ggml-large-v3.bin` — the multilingual model. This is required for any non-English transcription, auto language detection, or translation.
+
+```
+https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+```
+
+Save to `C:\whisper\models\` and update your config:
+```json
+"WHISPER_MODEL": "C:\\whisper\\models\\ggml-large-v3.bin"
+```
+
+Or override per-transcription using the `model` parameter in `transcribe_audio` or `generate_subtitles`.
+
+> **Note:** English-only models (`*.en.bin`) are faster and more accurate for English content but are completely unable to handle other languages. If you work with multilingual content, `large-v3` is the correct model regardless of hardware.
+
+---
+
 ## Transcription produces no output or empty file
 
 **Possible causes:**
 
 1. **Wrong model for the language** — English-only models (`*.en.bin`) cannot transcribe other languages. Use `ggml-large-v3.bin` for multilingual content.
 
-2. **Audio quality too low** — Very low bitrate files (e.g. old `.3gp` phone recordings using AMR-NB codec at ~12kbps) may be at the edge of what whisper can process. Try the `large-v3` model which handles degraded audio better.
+2. **Audio quality too low** — Very low bitrate files (e.g. old `.3gp` phone recordings using AMR-NB codec at ~12kbps) may be at the edge of what whisper can process. Noisy environments (background noise, reverb, distant speakers) are also challenging. Try `large-v3` which handles degraded audio better than smaller models.
 
 3. **File is silent or corrupted** — Run `analyze_media` on the file to check if FFprobe detects a valid audio stream.
 
@@ -84,6 +105,46 @@ If you installed FFmpeg to a non-standard location, set the `FFMPEG_PATH` enviro
 ffmpeg -i yourfile.3gp -ar 16000 -ac 1 output.wav
 ```
 Then transcribe the WAV directly.
+
+---
+
+## Background job fails on files with special characters or Unicode in the filename
+
+**Cause:** whisper-cli.exe cannot write the output file when the path contains Unicode characters (Japanese, Chinese, emoji, brackets, etc.) or certain special characters.
+
+**Current workaround:** Rename the file to use only ASCII characters before transcribing, then rename it back afterward if needed.
+
+```
+ren "▶ 日本語ファイル名.mp4" "temp_transcribe.mp4"
+```
+
+**Status:** This is a known bug. A fix is planned that will route output through a sanitized temp path and move the result to the correct destination after completion.
+
+---
+
+## Background job shows "failed" with no output
+
+**Possible causes:**
+
+1. **Unicode filename** — See above.
+
+2. **Model path wrong** — The detached process doesn't inherit corrected paths. Run `check_config` to verify paths.
+
+3. **Process was killed** — If whisper-cli.exe was manually terminated mid-job, no output file will exist. Retry.
+
+4. **Insufficient VRAM** — Large models on low-VRAM GPUs may fail silently. Try a smaller model.
+
+5. **File conversion failed** — Try transcribing a WAV file directly to isolate whether the issue is conversion or transcription.
+
+---
+
+## Background transcription doesn't produce SRT output
+
+**Cause:** Background mode (`background=true` in `transcribe_audio`) currently only produces `.txt` output. SRT format in background mode is not yet implemented.
+
+**Workaround:** For SRT files on files under ~4 minutes, use `generate_subtitles` in blocking mode. For longer files, transcribe in background mode first to get the `.txt`, then if SRT is needed, use `generate_subtitles` on the same file (it will re-transcribe).
+
+**Status:** SRT support in background mode is planned for a future release.
 
 ---
 
@@ -102,7 +163,7 @@ Verify GPU acceleration is active:
 
 ## `check_system` reports wrong VRAM amount
 
-This is a known Windows limitation. The `wmic` command reads VRAM from the registry, which on many AMD cards reports half the physical VRAM. A Vega 56 with 8GB HBM2 will typically show 4GB. This is a display issue only — whisper uses the full physical VRAM during inference. You can verify actual usage in Task Manager → Performance → GPU during a transcription.
+This is a known Windows limitation. The `wmic` command reads VRAM from the registry, which on many AMD cards reports half the physical VRAM. A Vega 56 with 8GB HBM2 will typically show 4GB. This is a display issue only — whisper uses the full physical VRAM during inference.
 
 ---
 
@@ -114,33 +175,7 @@ A `whisper-cli.exe` process is running from a previous job. Wait for it to finis
 2. Find `whisper-cli.exe`
 3. Right-click → End task
 
-Then retry your transcription.
-
----
-
-## Background job shows "failed" with no output
-
-**Possible causes:**
-
-1. **Model path wrong** — The detached process doesn't inherit corrected paths from a failed previous run. Run `check_config` to verify paths.
-
-2. **Process was killed** — If whisper-cli.exe was manually terminated mid-job, no output file will exist. Retry.
-
-3. **Insufficient VRAM** — Large models on low-VRAM GPUs may fail silently. Try a smaller model (`medium.en` instead of `large-v3`).
-
-4. **File conversion failed** — The temporary WAV conversion may have failed before whisper started. Try transcribing a WAV file directly to isolate whether the issue is conversion or transcription.
-
----
-
-## Subtitle generation produces "(speaking in foreign language)" throughout
-
-Whisper detected speech but couldn't transcribe it. Most common causes:
-
-1. **Audio quality** — AMR-NB codec files (old phone recordings, `.3gp`) may be too degraded for the medium model. Try `large-v3`.
-
-2. **Wrong language specified** — If you specify `language=ja` on a file that's mostly English, whisper may produce placeholder text for the English portions. Use `language=auto` or specify the correct language.
-
-3. **Mixed language content** — Files with two languages switching back and forth will have the minority language placeholdered when using a single language setting. There is no single-pass solution for this in whisper.
+Then retry.
 
 ---
 
@@ -148,31 +183,41 @@ Whisper detected speech but couldn't transcribe it. Most common causes:
 
 Whisper's auto-detection runs on the first 30 seconds of audio. If the file starts in a different language than the majority of its content, detection may be wrong.
 
-**Fix:** Specify the language explicitly with `language=ja` (or whatever the correct code is) rather than relying on auto-detection.
+**Fix:** Specify the language explicitly (e.g. `language=ja`) rather than relying on auto-detection.
+
+---
+
+## Subtitle generation produces "(speaking in foreign language)" throughout
+
+Whisper detected speech but couldn't transcribe it. Most common causes:
+
+1. **Wrong model** — Using an English-only model on non-English audio. Use `large-v3`.
+
+2. **Audio quality** — Noisy environments (kitchens, crowds, reverb) may defeat the medium model. Try `large-v3`.
+
+3. **Mixed language** — Files with two languages switching back and forth will have the minority language placeholdered with a single language setting.
 
 ---
 
 ## Subtitle translation only outputs English
 
-This is by design. Whisper's built-in `--translate` flag only translates **to English**. There is no built-in path to other target languages. For translation to non-English languages, translate the generated `.srt` file content separately using an external translation service or tool.
+This is by design. Whisper's built-in `--translate` flag only translates **to English**. For translation to other target languages, translate the `.srt` file content separately.
 
 ---
 
 ## Batch transcription stopped advancing
 
-Call `check_batch_progress` again — it may be that the current file is still processing. If the batch appears stuck:
+Call `check_batch_progress` again. If still stuck:
 
 1. Check Task Manager for a running `whisper-cli.exe` process
-2. If no process is running and `check_batch_progress` still shows the same file, the job may have failed silently
-3. Check the job log file in `%TEMP%\whisper-mcp-jobs\` for error output
-
-Failed files are flagged in the batch progress report with a reason. You can re-run them individually with `transcribe_audio`.
+2. Check job logs in `%TEMP%\whisper-mcp-jobs\`
+3. Failed files are flagged in the batch report — re-run them individually with `transcribe_audio`
 
 ---
 
 ## Large unattended batch from the command line
 
-For very large batches where you want to run overnight without Claude interaction, you can use `whisper-cli.exe` directly from a command prompt:
+For very large batches where you want to run overnight without Claude:
 
 ```
 for %f in (C:\path\to\folder\*.mp4) do (
@@ -180,7 +225,7 @@ for %f in (C:\path\to\folder\*.mp4) do (
 )
 ```
 
-This bypasses Claude entirely and writes `.txt` files next to each source file. The MCP tools will recognize these as already-transcribed when you run `analyze_media` or `start_batch` afterward.
+This writes `.txt` files next to each source. The MCP tools will recognize these as already-transcribed when you run `analyze_media` or `start_batch` afterward.
 
 ---
 
@@ -190,7 +235,7 @@ This bypasses Claude entirely and writes `.txt` files next to each source file. 
 C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.json
 ```
 
-If `AppData` is not visible, enable hidden folders in File Explorer: View → Show → Hidden items.
+If `AppData` is not visible: View → Show → Hidden items in File Explorer.
 
 ---
 
