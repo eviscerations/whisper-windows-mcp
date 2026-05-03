@@ -33,14 +33,14 @@ Detached process architecture: `transcribe_audio` with `background=true` spawns 
 
 ---
 
-## Known Bugs (Next Release)
+## Fixed in v2.0.0
 
-### Unicode / Special Character Filenames
+### ✅ Unicode / Special Character Filenames
 Files with Unicode characters (Japanese, Chinese, emoji, brackets) in the filename cause background transcription to silently fail — whisper runs to completion but cannot write the output file to the path.
 
 **Fix:** Route output through a sanitized temp path derived from a hash or job ID, then move the result to the correct destination after completion. Never pass the raw source path as the `-of` argument.
 
-### SRT Output Not Supported in Background Mode
+### ✅ SRT Output in Background Mode
 `spawnDetached` hardcodes `-otxt`. `generate_subtitles` blocks synchronously, which hits the 4-minute MCP timeout on files longer than ~4 minutes.
 
 **Fix:** Add `outputFormat` parameter to `spawnDetached`. Background mode should support `text`, `srt`, and `timestamps` output formats.
@@ -131,3 +131,18 @@ Community contributions for other languages welcome.
 Pull requests welcome. Check existing issues before starting work.
 
 If you've tested GPU acceleration on hardware not listed above, please open an issue with your GPU model, VRAM, model size, and observed throughput.
+
+
+### Model Management Tools
+- `list_models` — list installed Whisper models with file sizes and download status
+- `install_model` — download a model from Hugging Face directly to the models directory
+
+### Additional Parameters
+- `temperature` — expose whisper's `--temperature` flag (0.0–1.0). Higher values reduce hallucination on noisy audio. Low effort addition.
+- `prompt` — expose whisper's `--prompt` flag for context injection (e.g. "This is a legal deposition"). Improves domain-specific vocabulary accuracy.
+
+### VTT Subtitle Format
+WebVTT (`.vtt`) format support alongside SRT. VTT is the web standard used by YouTube, HTML5 `<video>`, and many modern players.
+
+### YouTube URL Transcription
+Direct transcription from YouTube URLs via yt-dlp. Download + transcribe in one step without manually saving the video first. Requires yt-dlp to be installed.

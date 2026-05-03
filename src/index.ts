@@ -83,16 +83,18 @@ interface Job {
   jobId: string;
   pid: number;
   sourceFile: string;
-  transcribeFrom: string; // may be a converted tmp wav
-  isTmp: boolean;         // true if transcribeFrom is a temp file we should clean up
+  transcribeFrom: string;
+  isTmp: boolean;
   outputPath: string;
+  tmpOutputBase: string;
+  outputFormat: "text" | "srt";
   logPath: string;
   jobPath: string;
   startTime: string;
   model: string;
   language: string;
   threads: number;
-  durationSec: number;   // 0 if unknown
+  durationSec: number;
   status: "running" | "complete" | "failed";
 }
 
@@ -101,7 +103,8 @@ function ensureJobsDir(): void {
 }
 
 async function spawnDetached(
-  filePath: string, model: string, language: string, threads: number
+  filePath: string, model: string, language: string, threads: number,
+  outputFormat: "text" | "srt" = "text"
 ): Promise<{ jobId: string; pid: number }> {
   ensureJobsDir();
 
@@ -109,7 +112,7 @@ async function spawnDetached(
   const logPath = join(JOBS_DIR, `${jobId}.log`);
   const jobPath = join(JOBS_DIR, `${jobId}.json`);
 
-  // Convert to WAV first if needed (fast, blocking — keeps things simple)
+  // Convert to WAV first if needed (fast, blocking)
   let transcribeFrom = filePath;
   let isTmp = false;
   if (needsConversion(filePath)) {
@@ -117,19 +120,30 @@ async function spawnDetached(
     isTmp = true;
   }
 
-  // Build args — use -otxt so whisper writes outputfile.txt itself
-  const outputBase = filePath.replace(/\.[^.]+$/, "");
-  const outputPath = outputBase + ".txt";
+  // Use a clean ASCII job-ID-based output path to avoid Unicode filename issues.
+  // After completion, readJobProgress will move the file to the correct destination.
+  const tmpOutputBase = join(JOBS_DIR, jobId);
+
+  // Determine final destination path
+  const sourceBase = filePath.replace(/\.[^.]+$/, "");
+  const ext = outputFormat === "srt" ? ".srt" : ".txt";
+  // For SRT with language code (non-English), append language code
+  const outputPath = outputFormat === "srt" && language !== "en" && language !== "auto"
+    ? `${sourceBase}.${language}.srt`
+    : `${sourceBase}${ext}`;
+
+  // Build args
+  const lang = language === "auto" ? "auto" : language;
   const args = [
     "-m", model,
     "-f", transcribeFrom,
-    "-l", language,
+    "-l", lang,
     "-t", String(threads),
-    "-otxt",
-    "-of", outputBase,
+    outputFormat === "srt" ? "-osrt" : "-otxt",
+    "-of", tmpOutputBase,
   ];
 
-  // Spawn detached, redirect both stdout+stderr to log file
+  // Spawn detached, redirect stdout+stderr to log file
   const logFd = openSync(logPath, "w");
   const child = spawn(WHISPER_CLI_PATH, args, {
     detached: true,
@@ -148,6 +162,8 @@ async function spawnDetached(
     transcribeFrom,
     isTmp,
     outputPath,
+    tmpOutputBase,
+    outputFormat,
     logPath,
     jobPath,
     startTime: new Date().toISOString(),
@@ -203,22 +219,36 @@ async function readJobProgress(jobId: string): Promise<string> {
 
   const lastSec = parseLastTimestamp(logContent);
   const isRunning = await isPidRunning(job.pid);
-  const outputExists = existsSync(job.outputPath);
+  const ext = job.outputFormat === "srt" ? ".srt" : ".txt";
+  const tmpOutput = `${job.tmpOutputBase}${ext}`;
+  const outputExists = existsSync(job.outputPath) || existsSync(tmpOutput);
 
   // Completed
   if (!isRunning && outputExists) {
+    // Move temp output file to correct destination if needed
+    const ext = job.outputFormat === "srt" ? ".srt" : ".txt";
+    const tmpOutput = `${job.tmpOutputBase}${ext}`;
+    if (existsSync(tmpOutput) && tmpOutput !== job.outputPath) {
+      try {
+        writeFileSync(job.outputPath, readFileSync(tmpOutput, "utf8"), "utf8");
+        unlinkSync(tmpOutput);
+      } catch { }
+    }
     job.status = "complete";
     writeFileSync(job.jobPath, JSON.stringify(job, null, 2), "utf8");
     // Clean up tmp wav if present
     if (job.isTmp && existsSync(job.transcribeFrom)) {
       try { unlinkSync(job.transcribeFrom); } catch { }
     }
-    const transcript = readFileSync(job.outputPath, "utf8").trim();
+    const outputContent = readFileSync(job.outputPath, "utf8").trim();
+    const preview = job.outputFormat === "srt"
+      ? outputContent.split("\n").slice(0, 20).join("\n")
+      : outputContent.slice(0, 600);
     return (
       `✅ Complete!\n\n` +
       `Source: ${basename(job.sourceFile)}\n` +
       `Output: ${job.outputPath}\n\n` +
-      `Preview:\n${transcript.slice(0, 600)}${transcript.length > 600 ? "..." : ""}`
+      `Preview:\n${preview}${outputContent.length > 600 && job.outputFormat !== "srt" ? "..." : ""}`
     );
   }
 
@@ -664,7 +694,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.9.0" },
+  { name: "whisper-windows-mcp", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -757,7 +787,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           translate_to_english: {
             type: "boolean",
-            description: "Also generate an English translation .srt alongside the native language .srt. Only applies when language is not 'en'.",
+            description: "Also generate an English translation .srt alongside the native language .srt. Only applies when language is not 'en'. Not available in background mode.",
+            default: false,
+          },
+          background: {
+            type: "boolean",
+            description: "Run as a detached background job — recommended for files over 10 minutes. Returns a job ID to use with check_progress. translate_to_english is not available in background mode.",
             default: false,
           },
           threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
@@ -1035,7 +1070,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       try {
-        const { jobId, pid } = await spawnDetached(filePath, model, language, threads);
+        const { jobId, pid } = await spawnDetached(filePath, model, language, threads, outputFormat === "srt" ? "srt" : "text");
         return {
           content: [{
             type: "text",
@@ -1176,6 +1211,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const filePath = args?.file_path as string;
     const language = (args?.language as string) || "en";
     const translateToEnglish = (args?.translate_to_english as boolean) || false;
+    const background = (args?.background as boolean) || false;
     const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
 
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
@@ -1184,6 +1220,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
     if (await isWhisperRunning()) {
       return { content: [{ type: "text", text: "Transcription already in progress. Wait for it to finish first." }], isError: true };
+    }
+
+    // Background mode — detached SRT job
+    if (background) {
+      try {
+        const { jobId, pid } = await spawnDetached(filePath, WHISPER_MODEL, language, threads, "srt");
+        return {
+          content: [{
+            type: "text",
+            text:
+              `⏳ Background subtitle generation started.\n\n` +
+              `Source: ${basename(filePath)}\n` +
+              `Job ID: ${jobId}\n` +
+              `PID: ${pid}\n` +
+              `Language: ${language}\n\n` +
+              `Call check_progress with job_id="${jobId}" to monitor.\n` +
+              `Note: translate_to_english is not available in background mode. ` +
+              `Run generate_subtitles again after completion to create the English translation.`,
+          }],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text", text: `Failed to start background subtitle job:\n\n${err?.message || String(err)}` }], isError: true };
+      }
     }
 
     try {
@@ -1340,7 +1399,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.9.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v2.0.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {
