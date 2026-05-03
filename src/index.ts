@@ -40,7 +40,7 @@ const WHISPER_THREADS = parseInt(process.env.WHISPER_THREADS ?? String(DEFAULT_T
 const SUPPORTED_EXTENSIONS = [
   ".mp3", ".wav",
   ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v",
-  ".m4a", ".ogg", ".flac",
+  ".m4a", ".ogg", ".flac", ".3gp", ".ts",
 ];
 const NATIVE_EXTENSIONS = [".mp3", ".wav"];
 
@@ -535,9 +535,11 @@ type OutputFormat = "text" | "timestamps" | "json" | "srt";
 
 function buildArgs(
   filePath: string, model: string, language: string,
-  outputFormat: OutputFormat, threads: number
+  outputFormat: OutputFormat, threads: number, translate = false
 ): string[] {
-  const args = ["-m", model, "-f", filePath, "-l", language, "-t", String(threads)];
+  const lang = language === "auto" ? "auto" : language;
+  const args = ["-m", model, "-f", filePath, "-l", lang, "-t", String(threads)];
+  if (translate) args.push("--translate");
   if (outputFormat === "srt") {
     args.push("-osrt", "-of", filePath.replace(/\.[^.]+$/, ""));
   } else if (outputFormat === "json") {
@@ -546,6 +548,50 @@ function buildArgs(
     args.push("--no-timestamps");
   }
   return args;
+}
+
+/**
+ * Detect the language of a file by running a short whisper probe.
+ * Runs whisper on the first 30 seconds only (--duration 30000ms).
+ * Returns the detected language code (e.g. "ja", "en") or null on failure.
+ */
+async function detectLanguage(wavPath: string, model: string, threads: number): Promise<string | null> {
+  try {
+    const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, [
+      "-m", model, "-f", wavPath,
+      "-l", "auto",
+      "-t", String(threads),
+      "--no-timestamps",
+      "--duration", "30000",
+    ], { maxBuffer: 10 * 1024 * 1024, windowsHide: true });
+    const output = stdout + stderr;
+    // whisper outputs: "auto-detected language: ja (p = 0.98)"
+    const m = output.match(/auto-detected language:\s*([a-z]{2,3})/i);
+    return m ? m[1].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run a single whisper SRT pass and move the output to destSrt.
+ * Returns the destSrt path.
+ */
+async function runSrtPass(
+  transcribeFrom: string, destSrt: string,
+  model: string, language: string, threads: number, translate = false
+): Promise<string> {
+  const args = buildArgs(transcribeFrom, model, language, "srt", threads, translate);
+  await execFileAsync(WHISPER_CLI_PATH, args, {
+    maxBuffer: 100 * 1024 * 1024,
+    windowsHide: true,
+  });
+  const tmpSrt = transcribeFrom.replace(/\.[^.]+$/, ".srt");
+  if (existsSync(tmpSrt)) {
+    writeFileSync(destSrt, readFileSync(tmpSrt, "utf8"));
+    try { unlinkSync(tmpSrt); } catch { }
+  }
+  return destSrt;
 }
 
 async function transcribeSingle(
@@ -618,7 +664,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.8.0" },
+  { name: "whisper-windows-mcp", version: "1.9.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -638,7 +684,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           file_path: { type: "string", description: "Absolute Windows path, e.g. C:\\Users\\You\\Downloads\\recording.mp4" },
           model: { type: "string", description: "Override model path. Leave blank to use WHISPER_MODEL." },
-          language: { type: "string", description: "Language code, e.g. en, es, fr. Defaults to en.", default: "en" },
+          language: { type: "string", description: "Language code (e.g. en, ja, es, fr) or 'auto' to detect automatically. Defaults to en.", default: "en" },
           output_format: {
             type: "string", enum: ["text", "timestamps", "json", "srt"],
             description: "text = plain (default), timestamps = with time codes, json = structured, srt = subtitle file saved next to source.",
@@ -693,14 +739,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "generate_subtitles",
       description:
-        "Generate an SRT subtitle file for an audio or video file. " +
-        "Saved next to the source file. Load in VLC via Subtitle → Add Subtitle File. " +
-        "Supports all the same formats as transcribe_audio.",
+        "Generate subtitle files for an audio or video file using whisper.cpp. " +
+        "Set language='auto' to detect the spoken language automatically. " +
+        "Set translate_to_english=true to also generate an English translation subtitle file. " +
+        "When both are requested, two .srt files are saved: one in the original language (e.g. film.ja.srt) " +
+        "and one English translation (film.en.srt). " +
+        "Load in VLC via Subtitle → Add Subtitle File. " +
+        "Supports all standard formats plus .3gp and .ts.",
       inputSchema: {
         type: "object",
         properties: {
           file_path: { type: "string", description: "Absolute Windows path to the file." },
-          language: { type: "string", description: "Language code. Defaults to en.", default: "en" },
+          language: {
+            type: "string",
+            description: "Language code (e.g. ja, es, fr, de) or 'auto' to detect automatically. Defaults to en.",
+            default: "en",
+          },
+          translate_to_english: {
+            type: "boolean",
+            description: "Also generate an English translation .srt alongside the native language .srt. Only applies when language is not 'en'.",
+            default: false,
+          },
           threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
         },
         required: ["file_path"],
@@ -1116,23 +1175,70 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "generate_subtitles") {
     const filePath = args?.file_path as string;
     const language = (args?.language as string) || "en";
+    const translateToEnglish = (args?.translate_to_english as boolean) || false;
     const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
 
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
     if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+    if (await isWhisperRunning()) {
+      return { content: [{ type: "text", text: "Transcription already in progress. Wait for it to finish first." }], isError: true };
+    }
 
     try {
-      const result = await transcribeSingle(filePath, WHISPER_MODEL, language, "srt", threads, false);
+      // Convert to WAV if needed
+      let transcribeFrom = filePath;
+      let tmpFile: string | null = null;
+      if (needsConversion(filePath)) {
+        tmpFile = await convertToWav(filePath);
+        transcribeFrom = tmpFile;
+      }
+
+      const baseNoExt = filePath.replace(/\.[^.]+$/, "");
+
+      // Auto-detect language if requested
+      let detectedLang = language;
+      if (language === "auto") {
+        const detected = await detectLanguage(transcribeFrom, WHISPER_MODEL, threads);
+        detectedLang = detected ?? "en";
+      }
+
+      const results: string[] = [];
+
+      // Pass 1 — native language SRT
+      const nativeSrt = language === "en" || detectedLang === "en"
+        ? `${baseNoExt}.srt`
+        : `${baseNoExt}.${detectedLang}.srt`;
+
+      await runSrtPass(transcribeFrom, nativeSrt, WHISPER_MODEL, detectedLang, threads, false);
+      results.push(`✅ Native (${detectedLang}): ${nativeSrt}`);
+
+      // Pass 2 — English translation SRT (only if language isn't already English)
+      if (translateToEnglish && detectedLang !== "en") {
+        const englishSrt = `${baseNoExt}.en.srt`;
+        await runSrtPass(transcribeFrom, englishSrt, WHISPER_MODEL, detectedLang, threads, true);
+        results.push(`✅ English translation: ${englishSrt}`);
+      }
+
+      // Clean up temp WAV
+      if (tmpFile && existsSync(tmpFile)) try { unlinkSync(tmpFile); } catch { }
+
+      const langNote = language === "auto"
+        ? `Auto-detected language: ${detectedLang}\n\n`
+        : "";
+
       return {
         content: [{
           type: "text",
           text:
-            `✅ Subtitle file generated!\n\n` +
-            `Saved to: ${result.srtPath}\n\n` +
+            `✅ Subtitle file(s) generated!\n\n` +
+            langNote +
+            results.join("\n") + "\n\n" +
             `To use in VLC: Subtitle → Add Subtitle File → select the .srt file.\n` +
-            `Works in any video player that supports external subtitles.`,
+            `Works in any video player that supports external subtitles.\n\n` +
+            `Note: whisper's built-in translation only translates to English. ` +
+            `For other target languages, translate the .srt file contents separately.`,
         }],
       };
     } catch (err: any) {
@@ -1234,7 +1340,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.8.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v1.9.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {

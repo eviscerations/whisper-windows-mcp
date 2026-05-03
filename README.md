@@ -1,9 +1,9 @@
 # whisper-windows-mcp
 
-A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop transcribe audio files locally using [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — no internet connection required, no data sent to the cloud.
+A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop transcribe audio and video files locally using [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — with GPU acceleration, multilingual support, and batch processing. No internet connection required. No audio ever leaves your machine.
 
 > **Why does this exist?**
-> The popular `whisper-mcp` package was built for macOS and assumes a Unix environment. It does not work on Windows. This package was written specifically for Windows users who want the same functionality.
+> The popular `whisper-mcp` package was built for macOS and assumes a Unix environment. It does not work on Windows. This package was written specifically for Windows users who want local AI transcription integrated with Claude Desktop.
 
 ---
 
@@ -12,21 +12,20 @@ A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop tr
 Once installed, you can say things like this directly in Claude Desktop:
 
 - *"Transcribe C:\Users\Me\Downloads\meeting.mp3"*
-- *"Transcribe this recording and give me a summary"*
-- *"Transcribe with timestamps so I can find specific moments"*
-- *"Generate subtitles for this video"*
-
-Everything runs on your own machine. No audio ever leaves your computer.
+- *"Transcribe this folder of recordings and save each as a text file"*
+- *"Generate Japanese and English subtitles for this video"*
+- *"Start a batch transcription of everything in this folder"*
+- *"How long will it take to transcribe these files?"*
+- *"Check if GPU acceleration is working"*
 
 ---
 
 ## Requirements
 
-Before installing this package, you need three things set up on your Windows machine:
-
-1. **Node.js 18 or later** — [download from nodejs.org](https://nodejs.org)
-2. **whisper.cpp binaries** — the actual transcription engine (see Step 1 below)
-3. **A Whisper model file** — the AI model that does the transcription (see Step 2 below)
+1. **Node.js 18 or later** — [nodejs.org](https://nodejs.org)
+2. **whisper.cpp binaries with Vulkan GPU support** — see Step 1
+3. **A Whisper model file** — see Step 2
+4. **FFmpeg** — required for video files and non-WAV/MP3 audio
 
 ---
 
@@ -34,11 +33,11 @@ Before installing this package, you need three things set up on your Windows mac
 
 ### Option A — Pre-built Vulkan release (recommended)
 
-Download `whisper-vulkan-win-x64.zip` from the [releases page](https://github.com/eviscerations/whisper-windows-mcp/releases).
+Download `whisper-vulkan-win-x64.zip` from the [releases page](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
 
-This is a custom-compiled build with **Vulkan GPU acceleration** enabled. It works with AMD, NVIDIA, and Intel GPUs on Windows — no vendor-specific SDK required.
+This is a custom-compiled build with **Vulkan GPU acceleration** enabled. Works with AMD, NVIDIA, and Intel GPUs — no vendor-specific SDK required.
 
-Extract the zip to `C:\whisper\Release\`. You should end up with these files:
+Extract to `C:\whisper\Release\`. You should end up with:
 
 ```
 C:\whisper\Release\whisper-cli.exe
@@ -49,13 +48,11 @@ C:\whisper\Release\ggml-cpu.dll
 C:\whisper\Release\whisper.dll
 ```
 
-**GPU acceleration is automatic** — if a supported GPU is present, whisper.cpp will use it. No additional configuration needed.
+GPU acceleration is automatic — no additional configuration needed.
 
 ### Option B — Build from source
 
-If you prefer to compile your own binary (advanced users):
-
-**Prerequisites:** Git, CMake, Visual Studio Build Tools 2022+ with "Desktop development with C++", Vulkan SDK from [lunarg.com](https://vulkan.lunarg.com/sdk/home#windows).
+Requires: Git, CMake, Visual Studio Build Tools 2022+ with "Desktop development with C++", Vulkan SDK from [lunarg.com](https://vulkan.lunarg.com/sdk/home#windows).
 
 ```
 git clone https://github.com/ggml-org/whisper.cpp
@@ -64,119 +61,68 @@ cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --target whisper-cli
 ```
 
-Copy the resulting binaries from `build\bin\Release\` to `C:\whisper\Release\`.
+Copy the binaries from `build\bin\Release\` to `C:\whisper\Release\`.
 
-> **Note:** The default whisper.cpp Windows release on GitHub does not include a Vulkan build. You must either use the pre-built release above or compile from source with `-DGGML_VULKAN=ON`.
+> **Note:** The official whisper.cpp Windows releases on GitHub do not include a Vulkan build. You must use the pre-built release above or compile from source with `-DGGML_VULKAN=ON`.
 
 ---
 
 ## Step 2 — Download a Whisper model
 
-Models are downloaded from Hugging Face. Choose one based on your needs:
-
-| Model | File size | Speed | Accuracy | Recommended for |
+| Model | Size | Speed | Accuracy | Best for |
 |---|---|---|---|---|
 | `ggml-tiny.en.bin` | 75 MB | Very fast | Basic | Quick tests |
-| `ggml-base.en.bin` | 142 MB | Fast | Good | Everyday use |
+| `ggml-base.en.bin` | 142 MB | Fast | Good | Everyday English |
 | `ggml-small.en.bin` | 466 MB | Moderate | Better | Important recordings |
-| `ggml-medium.en.bin` | 1.5 GB | Fast on GPU | Very good | Best quality |
-| `ggml-large-v3.bin` | 2.9 GB | Fast on GPU | Excellent | Maximum accuracy |
+| `ggml-medium.en.bin` | 1.5 GB | Fast on GPU | Very good | Best quality English |
+| `ggml-large-v3.bin` | 2.9 GB | Fast on GPU | Excellent | Multilingual, best accuracy |
 
-**For most people, `base.en` or `small.en` is the best starting point.** With GPU acceleration, `medium.en` and `large-v3` become practical for everyday use.
+For **English-only** use: `base.en` or `medium.en` are the best starting points.
+For **multilingual** use (auto-detect, foreign language, translation): use `large-v3` for best results.
 
-Download your chosen model from:
-
+Download from Hugging Face:
 ```
-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin
 ```
 
-Save it to `C:\whisper\models\` — create that folder if it doesn't exist.
+Save to `C:\whisper\models\`.
 
 ---
 
-## Step 3 — Install this MCP server
+## Step 3 — Install FFmpeg
+
+FFmpeg is required for video files and non-native audio formats.
+
+Install via winget:
+```
+winget install ffmpeg
+```
+
+Or download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to your PATH.
+
+Verify:
+```
+ffmpeg -version
+```
+
+---
+
+## Step 4 — Install this MCP server
 
 ```
 npm install -g whisper-windows-mcp
 ```
 
-Or use `npx` directly in your config (see Step 4).
-
 ---
 
-## Step 4 — Configure Claude Desktop
+## Step 5 — Configure Claude Desktop
 
-1. Open Claude Desktop
-2. Go to **Settings → Developer → Edit Config**
-3. Add the whisper-windows-mcp entry:
+Open Claude Desktop → Settings → Developer → Edit Config.
+
+Add the `whisper` entry:
 
 ```json
 {
-  "mcpServers": {
-    "whisper": {
-      "command": "npx",
-      "args": ["-y", "whisper-windows-mcp"],
-      "env": {
-        "WHISPER_CLI_PATH": "C:\\whisper\\Release\\whisper-cli.exe",
-        "WHISPER_MODEL": "C:\\whisper\\models\\ggml-base.en.bin"
-      }
-    }
-  }
-}
-```
-
-> **Important:** If your `claude_desktop_config.json` already has other content, add the `"mcpServers"` block inside the existing `{}` — don't replace the whole file.
-
-4. Save the file and fully restart Claude Desktop.
-5. Go to **Settings → Developer** — you should see **whisper** listed with a green **running** badge.
-
----
-
-## Step 5 — Test it
-
-In Claude Desktop, type:
-
-> *"Can you check your whisper config?"*
-
-Claude will use the `check_config` tool to verify everything is set up correctly. Then try a transcription:
-
-> *"Please transcribe C:\Users\YourName\Downloads\recording.mp3"*
-
----
-
-## GPU acceleration
-
-The pre-built Vulkan release enables GPU acceleration automatically. No flags or configuration required — whisper.cpp detects your GPU at startup and uses it if available.
-
-**Confirmed working:** AMD Radeon RX Vega 56 (GCN 5th gen), and any GPU with Vulkan 1.0+ support.
-
-**Performance comparison with medium.en model:**
-
-| Hardware | ~5 min audio file |
-|---|---|
-| CPU only (Ryzen 7 2700x) | ~8–12 minutes |
-| GPU (Vega 56 via Vulkan) | ~20–40 seconds |
-
-GPU utilization during transcription is typically 15–30% — efficient bursts, not sustained load.
-
----
-
-## Output formats
-
-- **text** (default) — plain transcript
-- **timestamps** — transcript with `[00:00:00 --> 00:00:05]` time codes
-- **json** — structured output
-- **srt** — subtitle file saved next to the source file
-
----
-
-## Full config example
-
-```json
-{
-  "preferences": {
-    "coworkWebSearchEnabled": true
-  },
   "mcpServers": {
     "whisper": {
       "command": "npx",
@@ -190,7 +136,167 @@ GPU utilization during transcription is typically 15–30% — efficient bursts,
 }
 ```
 
-Config file location: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.json`
+Config file location: `C:\Users\YourName\AppData\Roaming\Claude\claude_desktop_config.json`
+
+> Use **double backslashes** in all paths.
+
+Save and **fully restart** Claude Desktop. You should see **whisper** listed with a green running badge in Settings → Developer.
+
+---
+
+## Step 6 — Verify your setup
+
+In Claude Desktop, ask:
+
+> *"Check your whisper config"*
+
+Then:
+
+> *"Check your system hardware"*
+
+This confirms your GPU is detected and Vulkan acceleration is active.
+
+---
+
+## Available tools
+
+### `transcribe_audio`
+Transcribe a single file. Supports blocking (default) or background mode for long files.
+
+| Parameter | Description |
+|---|---|
+| `file_path` | Absolute path to the file (required) |
+| `language` | Language code (`en`, `ja`, `es`, etc.) or `auto` to detect. Default: `en` |
+| `output_format` | `text` (default), `timestamps`, `json`, or `srt` |
+| `save_to_file` | Save transcript as .txt next to the source file |
+| `background` | Run as detached job — returns a job ID immediately. Use `check_progress` to monitor. Recommended for files over 10 minutes. |
+| `threads` | CPU thread override |
+
+---
+
+### `check_progress`
+Monitor a background transcription job started with `transcribe_audio` (background=true).
+
+Returns elapsed time, last processed timestamp, percentage, and the full transcript when complete.
+
+| Parameter | Description |
+|---|---|
+| `job_id` | Job ID returned by `transcribe_audio` |
+
+---
+
+### `start_batch`
+Automated sequential batch transcription of all untranscribed files in a folder. Sorts by duration (shortest first), processes one at a time as background jobs, validates each output.
+
+| Parameter | Description |
+|---|---|
+| `folder_path` | Path to folder (required) |
+| `language` | Language code. Default: `en` |
+| `threads` | CPU thread override |
+
+---
+
+### `check_batch_progress`
+Monitor a running batch. Automatically advances to the next file when the current one finishes. Returns overall progress, current file with timestamp, ETA, and any failed files.
+
+| Parameter | Description |
+|---|---|
+| `batch_id` | Batch ID returned by `start_batch` |
+
+---
+
+### `transcribe_batch` (interactive)
+Process files one at a time with a preview and confirmation before each. Useful when you want to review as you go.
+
+| Parameter | Description |
+|---|---|
+| `folder_path` | Path to folder (required) |
+| `file_index` | Which file to process (1-based). Omit to list files first. |
+| `language` | Language code. Default: `en` |
+| `recursive` | Include subfolders |
+
+---
+
+### `generate_subtitles`
+Generate SRT subtitle files. Supports automatic language detection and English translation output.
+
+| Parameter | Description |
+|---|---|
+| `file_path` | Path to file (required) |
+| `language` | Language code or `auto` to detect. Default: `en` |
+| `translate_to_english` | Also generate an English translation `.en.srt`. Only applies when source is not English. |
+| `threads` | CPU thread override |
+
+When both native and translation are requested, two files are saved next to the source:
+- `filename.ja.srt` — original language
+- `filename.en.srt` — English translation
+
+> Whisper's built-in translation only translates **to English**. For other target languages, translate the .srt file contents separately.
+
+---
+
+### `analyze_media`
+Analyze files before committing to transcription. Returns duration, size, codec, and estimated transcription time on CPU and GPU. For folders, shows all files in a sortable table with transcription status.
+
+| Parameter | Description |
+|---|---|
+| `path` | Path to a single file or folder (required) |
+| `sort_by` | For folders: `duration` (default), `name`, or `size` |
+
+---
+
+### `check_config`
+Verify whisper-cli.exe, the model file, and FFmpeg are all accessible. Run this first if anything is failing.
+
+---
+
+### `check_system`
+Detect GPU hardware and verify Vulkan acceleration is available. Reports GPU name, VRAM, whether `ggml-vulkan.dll` is present, and recommends the best model size for your hardware.
+
+---
+
+## Supported formats
+
+| Type | Formats |
+|---|---|
+| Native (no conversion) | `mp3`, `wav` |
+| Video (auto-converted via FFmpeg) | `mp4`, `mkv`, `avi`, `mov`, `webm`, `flv`, `wmv`, `m4v`, `ts`, `3gp` |
+| Audio (auto-converted via FFmpeg) | `m4a`, `ogg`, `flac` |
+
+---
+
+## GPU acceleration
+
+The pre-built Vulkan release enables GPU acceleration automatically. Tested on AMD Radeon RX Vega 56 (GCN 5th gen). Any GPU with Vulkan 1.0+ support should work, including NVIDIA and Intel Arc.
+
+**Performance comparison (medium.en model, ~5 minute audio file):**
+
+| Hardware | Time |
+|---|---|
+| CPU only (Ryzen 7 2700x, 8 threads) | 8–12 minutes |
+| GPU (Vega 56 via Vulkan) | 20–40 seconds |
+
+GPU utilization during transcription is typically 15–20%, dropping back to idle between files. CPU stays around 15%.
+
+---
+
+## Multilingual support
+
+Whisper can auto-detect the spoken language and transcribe in that language. The built-in translation model translates **to English only**.
+
+For best multilingual accuracy, use the `large-v3` model. English-specific models (`*.en.bin`) cannot detect or transcribe other languages.
+
+**Example — foreign language video with subtitles:**
+1. Ask Claude to generate subtitles with `language=auto` and `translate_to_english=true`
+2. Whisper detects the language and generates a native-language SRT
+3. A second pass generates an English translation SRT
+4. Load either file in VLC via Subtitle → Add Subtitle File
+
+---
+
+## Designed for free-tier users
+
+This tool is built to minimize Claude API interactions. The entire transcription workflow — scan, analyze, queue, run, validate — is designed to require as few Claude interactions as possible. Heavy lifting is done locally on your machine.
 
 ---
 
@@ -211,19 +317,22 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed solutions.
 
 Quick checklist:
 - Paths in config use **double backslashes** (`C:\\whisper\\...`)
-- `whisper-cli.exe` exists at the path specified
-- The model `.bin` file exists at the path specified
+- `whisper-cli.exe` exists at the configured path
+- Model `.bin` file exists at the configured path
+- FFmpeg is installed and in PATH (`ffmpeg -version` works)
 - Claude Desktop was fully restarted after editing config
-- The whisper server shows **running** in Settings → Developer
+- Whisper shows **running** in Settings → Developer
 
 ---
 
 ## License
 
-MIT — free to use, modify, and distribute.
+MIT
 
 ---
 
 ## Contributing
 
 Pull requests welcome. See [ROADMAP.md](ROADMAP.md) for planned features.
+
+If you've tested GPU acceleration on hardware not listed above, please open an issue with your results — GPU model, VRAM, model size, and observed throughput.
