@@ -11,10 +11,11 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import {
   existsSync, unlinkSync, readdirSync,
-  writeFileSync, readFileSync
+  writeFileSync, readFileSync, mkdirSync,
+  openSync, closeSync, statSync,
 } from "fs";
 import { cpus, tmpdir } from "os";
 import { join, extname, basename, dirname } from "path";
@@ -71,6 +72,183 @@ async function isWhisperRunning(): Promise<boolean> {
     // If tasklist fails for any reason, assume safe to proceed
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Background job architecture (Priorities 4 + 5)
+// ---------------------------------------------------------------------------
+const JOBS_DIR = join(tmpdir(), "whisper-mcp-jobs");
+
+interface Job {
+  jobId: string;
+  pid: number;
+  sourceFile: string;
+  transcribeFrom: string; // may be a converted tmp wav
+  isTmp: boolean;         // true if transcribeFrom is a temp file we should clean up
+  outputPath: string;
+  logPath: string;
+  jobPath: string;
+  startTime: string;
+  model: string;
+  language: string;
+  threads: number;
+  durationSec: number;   // 0 if unknown
+  status: "running" | "complete" | "failed";
+}
+
+function ensureJobsDir(): void {
+  mkdirSync(JOBS_DIR, { recursive: true });
+}
+
+async function spawnDetached(
+  filePath: string, model: string, language: string, threads: number
+): Promise<{ jobId: string; pid: number }> {
+  ensureJobsDir();
+
+  const jobId = `job_${Date.now()}`;
+  const logPath = join(JOBS_DIR, `${jobId}.log`);
+  const jobPath = join(JOBS_DIR, `${jobId}.json`);
+
+  // Convert to WAV first if needed (fast, blocking — keeps things simple)
+  let transcribeFrom = filePath;
+  let isTmp = false;
+  if (needsConversion(filePath)) {
+    transcribeFrom = await convertToWav(filePath);
+    isTmp = true;
+  }
+
+  // Build args — use -otxt so whisper writes outputfile.txt itself
+  const outputBase = filePath.replace(/\.[^.]+$/, "");
+  const outputPath = outputBase + ".txt";
+  const args = [
+    "-m", model,
+    "-f", transcribeFrom,
+    "-l", language,
+    "-t", String(threads),
+    "-otxt",
+    "-of", outputBase,
+  ];
+
+  // Spawn detached, redirect both stdout+stderr to log file
+  const logFd = openSync(logPath, "w");
+  const child = spawn(WHISPER_CLI_PATH, args, {
+    detached: true,
+    stdio: ["ignore", logFd, logFd],
+    windowsHide: true,
+  });
+  closeSync(logFd);
+  child.unref();
+
+  const pid = child.pid ?? 0;
+
+  const job: Job = {
+    jobId,
+    pid,
+    sourceFile: filePath,
+    transcribeFrom,
+    isTmp,
+    outputPath,
+    logPath,
+    jobPath,
+    startTime: new Date().toISOString(),
+    model,
+    language,
+    threads,
+    durationSec: 0,
+    status: "running",
+  };
+
+  writeFileSync(jobPath, JSON.stringify(job, null, 2), "utf8");
+  return { jobId, pid };
+}
+
+async function isPidRunning(pid: number): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      "tasklist",
+      ["/FI", `PID eq ${pid}`, "/NH"],
+      { windowsHide: true }
+    );
+    return stdout.toLowerCase().includes("whisper-cli.exe");
+  } catch {
+    return false;
+  }
+}
+
+function parseLastTimestamp(logContent: string): number {
+  // whisper outputs: [00:01:30.000 --> 00:01:35.000]  text
+  const re = /\[(\d{2}):(\d{2}):(\d{2})\.\d{3} -->/g;
+  let lastSec = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(logContent)) !== null) {
+    const sec = parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
+    if (sec > lastSec) lastSec = sec;
+  }
+  return lastSec;
+}
+
+async function readJobProgress(jobId: string): Promise<string> {
+  const jobPath = join(JOBS_DIR, `${jobId}.json`);
+  if (!existsSync(jobPath)) {
+    return `❌ Job not found: ${jobId}\n\nThe job file may have been deleted or the ID is incorrect.`;
+  }
+
+  const job: Job = JSON.parse(readFileSync(jobPath, "utf8"));
+
+  // Read log
+  let logContent = "";
+  if (existsSync(job.logPath)) {
+    logContent = readFileSync(job.logPath, "utf8");
+  }
+
+  const lastSec = parseLastTimestamp(logContent);
+  const isRunning = await isPidRunning(job.pid);
+  const outputExists = existsSync(job.outputPath);
+
+  // Completed
+  if (!isRunning && outputExists) {
+    job.status = "complete";
+    writeFileSync(job.jobPath, JSON.stringify(job, null, 2), "utf8");
+    // Clean up tmp wav if present
+    if (job.isTmp && existsSync(job.transcribeFrom)) {
+      try { unlinkSync(job.transcribeFrom); } catch { }
+    }
+    const transcript = readFileSync(job.outputPath, "utf8").trim();
+    return (
+      `✅ Complete!\n\n` +
+      `Source: ${basename(job.sourceFile)}\n` +
+      `Output: ${job.outputPath}\n\n` +
+      `Preview:\n${transcript.slice(0, 600)}${transcript.length > 600 ? "..." : ""}`
+    );
+  }
+
+  // Failed
+  if (!isRunning && !outputExists) {
+    job.status = "failed";
+    writeFileSync(job.jobPath, JSON.stringify(job, null, 2), "utf8");
+    const lastLines = logContent.split(/\r?\n/).filter(l => l.trim()).slice(-5).join("\n");
+    return (
+      `❌ Failed or cancelled.\n\n` +
+      `Source: ${basename(job.sourceFile)}\n` +
+      `No output found at: ${job.outputPath}\n\n` +
+      `Last log output:\n${lastLines || "(empty)"}`
+    );
+  }
+
+  // Still running
+  const elapsed = Math.round((Date.now() - new Date(job.startTime).getTime()) / 1000);
+  const progressLine = lastSec > 0
+    ? `Last segment: ${formatDuration(lastSec)}`
+    : "Starting up...";
+
+  return (
+    `⏳ In progress...\n\n` +
+    `Source: ${basename(job.sourceFile)}\n` +
+    `Job ID: ${jobId}\n` +
+    `Elapsed: ${formatDuration(elapsed)}\n` +
+    `${progressLine}\n\n` +
+    `Call check_progress with this job ID to get an update.`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +474,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.6.0" },
+  { name: "whisper-windows-mcp", version: "1.7.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -309,8 +487,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Natively supports mp3 and wav. Automatically converts mp4, mkv, avi, mov, " +
         "webm, m4a, flac, ogg etc. via FFmpeg — no manual conversion needed. " +
         "Can output plain text, timestamps, JSON, or SRT subtitle files. " +
-        "WARNING: files over 30 minutes cannot be cancelled cleanly from Claude — " +
-        "use Task Manager to kill the process if needed.",
+        "For files that may take more than 4 minutes, set background=true to run as a detached job " +
+        "and use check_progress to monitor it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -324,8 +502,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
           save_to_file: { type: "boolean", description: "Save transcript as .txt next to the source file.", default: false },
+          background: { type: "boolean", description: "Run as a detached background job. Returns a job ID immediately. Use check_progress to monitor. Recommended for files over 10 minutes.", default: false },
         },
         required: ["file_path"],
+      },
+    },
+    {
+      name: "check_progress",
+      description:
+        "Check the status of a background transcription job started with transcribe_audio (background=true). " +
+        "Returns current progress, elapsed time, last processed timestamp, and the transcript when complete. " +
+        "Call this repeatedly until the job shows as complete or failed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          job_id: { type: "string", description: "Job ID returned by transcribe_audio when background=true." },
+        },
+        required: ["job_id"],
       },
     },
     {
@@ -462,7 +655,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const vulkan = hasVulkanDll();
 
     // Single file
-    const { statSync } = await import("fs");
     const stat = statSync(targetPath);
 
     if (stat.isFile()) {
@@ -591,12 +783,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const outputFormat = ((args?.output_format as string) || "text") as OutputFormat;
     const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
     const saveToFile = (args?.save_to_file as boolean) || false;
+    const background = (args?.background as boolean) || false;
 
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
     if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
 
+    // Background mode — detached process, returns immediately
+    if (background) {
+      if (await isWhisperRunning()) {
+        return {
+          content: [{ type: "text", text: "Transcription already in progress. Wait for the current job to finish before starting another." }],
+          isError: true,
+        };
+      }
+      try {
+        const { jobId, pid } = await spawnDetached(filePath, model, language, threads);
+        return {
+          content: [{
+            type: "text",
+            text:
+              `⏳ Background transcription started.\n\n` +
+              `Source: ${basename(filePath)}\n` +
+              `Job ID: ${jobId}\n` +
+              `PID: ${pid}\n\n` +
+              `Call check_progress with job_id="${jobId}" to monitor progress.\n` +
+              `Output will be saved to: ${filePath.replace(/\.[^.]+$/, ".txt")}`,
+          }],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text", text: `Failed to start background job:\n\n${err?.message || String(err)}` }], isError: true };
+      }
+    }
+
+    // Blocking mode (default)
     try {
       const result = await transcribeSingle(filePath, model, language, outputFormat, threads, saveToFile);
       let response = result.text;
@@ -605,6 +826,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: response }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Transcription failed:\n\n${err?.stderr || err?.message || String(err)}` }], isError: true };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // check_progress
+  // -------------------------------------------------------------------------
+  if (name === "check_progress") {
+    const jobId = args?.job_id as string;
+    if (!jobId) return { content: [{ type: "text", text: "job_id is required." }], isError: true };
+    try {
+      const result = await readJobProgress(jobId);
+      return { content: [{ type: "text", text: result }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error reading job progress:\n\n${err?.message || String(err)}` }], isError: true };
     }
   }
 
@@ -732,7 +967,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.6.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v1.7.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {
