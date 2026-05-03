@@ -17,7 +17,7 @@ import {
   writeFileSync, readFileSync
 } from "fs";
 import { cpus, tmpdir } from "os";
-import { join, extname, basename } from "path";
+import { join, extname, basename, dirname } from "path";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
@@ -71,6 +71,56 @@ async function isWhisperRunning(): Promise<boolean> {
     // If tasklist fails for any reason, assume safe to proceed
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// GPU / system detection (Priority 9)
+// ---------------------------------------------------------------------------
+interface GpuInfo {
+  name: string;
+  vramBytes: number;
+}
+
+async function detectGpus(): Promise<GpuInfo[]> {
+  try {
+    const { stdout } = await execFileAsync(
+      "wmic",
+      ["path", "win32_VideoController", "get", "name,AdapterRAM", "/format:csv"],
+      { windowsHide: true }
+    );
+    const gpus: GpuInfo[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("Node") || trimmed.startsWith(",AdapterRAM")) continue;
+      const parts = trimmed.split(",");
+      if (parts.length < 3) continue;
+      const vramBytes = parseInt(parts[1] ?? "0", 10) || 0;
+      const name = (parts[2] ?? "").trim();
+      if (name && name !== "Name") gpus.push({ name, vramBytes });
+    }
+    return gpus;
+  } catch {
+    return [];
+  }
+}
+
+function formatVram(bytes: number): string {
+  if (!bytes || bytes < 1024 * 1024) return "Unknown";
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+function recommendedModel(vramBytes: number): string {
+  const gb = vramBytes / (1024 * 1024 * 1024);
+  if (gb >= 6) return "large-v3 (ggml-large-v3.bin) — fits comfortably in your VRAM";
+  if (gb >= 4) return "medium.en (ggml-medium.en.bin) — good fit for your VRAM";
+  if (gb >= 2) return "small.en (ggml-small.en.bin) — safe choice for your VRAM";
+  return "base.en (ggml-base.en.bin) — recommended for limited VRAM";
+}
+
+function hasVulkanDll(): boolean {
+  const whisperDir = dirname(WHISPER_CLI_PATH);
+  return existsSync(join(whisperDir, "ggml-vulkan.dll"));
 }
 
 function needsConversion(filePath: string): boolean {
@@ -177,7 +227,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.4.0" },
+  { name: "whisper-windows-mcp", version: "1.5.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -255,6 +305,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Verify whisper-cli.exe, model, and FFmpeg are all available. Run this first if anything fails.",
       inputSchema: { type: "object", properties: {} },
     },
+    {
+      name: "check_system",
+      description:
+        "Detect GPU hardware and verify Vulkan acceleration is available. " +
+        "Reports GPU name, VRAM, whether the Vulkan binary is installed, " +
+        "and recommends the best Whisper model for your hardware. " +
+        "Run this if you want to confirm GPU acceleration is working or diagnose why it isn't.",
+      inputSchema: { type: "object", properties: {} },
+    },
   ],
 }));
 
@@ -282,6 +341,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `Threads:     ${WHISPER_THREADS} of ${SYSTEM_THREADS} logical cores\n` +
           `FFmpeg:      ${ffmpegStatus}\n\n` +
           `Optional env vars: WHISPER_THREADS, FFMPEG_PATH`,
+      }],
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // check_system
+  // -------------------------------------------------------------------------
+  if (name === "check_system") {
+    const vulkan = hasVulkanDll();
+    const gpus = await detectGpus();
+
+    let gpuLines = "";
+    if (gpus.length === 0) {
+      gpuLines = "⚠️  No GPU detected via wmic — this may indicate a driver issue.\n";
+    } else {
+      for (const gpu of gpus) {
+        const vramStr = formatVram(gpu.vramBytes);
+        gpuLines += `🖥️  GPU:   ${gpu.name}\n`;
+        gpuLines += `💾  VRAM:  ${vramStr} (reported by Windows — may be half of actual on AMD cards)\n`;
+        if (gpu.vramBytes > 0) {
+          gpuLines += `📦  Recommended model: ${recommendedModel(gpu.vramBytes)}\n`;
+        }
+        gpuLines += "\n";
+      }
+    }
+
+    const vulkanLine = vulkan
+      ? `✅ Vulkan binary:  ggml-vulkan.dll found — GPU acceleration is active`
+      : `❌ Vulkan binary:  ggml-vulkan.dll NOT found — whisper is running CPU-only\n\n` +
+        `   To enable GPU acceleration:\n` +
+        `   Download whisper-vulkan-win-x64.zip from:\n` +
+        `   https://github.com/eviscerations/whisper-windows-mcp/releases\n` +
+        `   Extract to: ${dirname(WHISPER_CLI_PATH)}`;
+
+    return {
+      content: [{
+        type: "text",
+        text: `System check\n${"─".repeat(40)}\n\n${gpuLines}${vulkanLine}`,
       }],
     };
   }
@@ -437,7 +534,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.4.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v1.5.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {

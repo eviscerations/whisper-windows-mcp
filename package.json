@@ -1,6 +1,6 @@
 {
   "name": "whisper-windows-mcp",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "Windows-native MCP server for local audio transcription using whisper.cpp with Vulkan GPU acceleration",
   "main": "dist/index.js",
   "bin": {
