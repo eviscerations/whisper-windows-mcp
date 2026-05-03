@@ -123,6 +123,75 @@ function hasVulkanDll(): boolean {
   return existsSync(join(whisperDir, "ggml-vulkan.dll"));
 }
 
+// ---------------------------------------------------------------------------
+// Media analysis (Priority 3)
+// ---------------------------------------------------------------------------
+interface MediaInfo {
+  filePath: string;
+  fileName: string;
+  durationSec: number;
+  sizeMb: number;
+  codec: string;
+  bitrate: number; // kbps
+}
+
+async function probeFile(filePath: string): Promise<MediaInfo | null> {
+  try {
+    const { stdout } = await execFileAsync(FFMPEG_PATH.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1").replace(/ffmpeg$/i, "ffprobe"), [
+      "-v", "quiet",
+      "-print_format", "json",
+      "-show_format",
+      "-show_streams",
+      filePath,
+    ], { windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+
+    const data = JSON.parse(stdout);
+    const fmt = data.format ?? {};
+    const streams: any[] = data.streams ?? [];
+    const audioStream = streams.find((s: any) => s.codec_type === "audio");
+
+    const durationSec = parseFloat(fmt.duration ?? "0") || 0;
+    const sizeMb = parseInt(fmt.size ?? "0", 10) / (1024 * 1024);
+    const bitrate = Math.round(parseInt(fmt.bit_rate ?? "0", 10) / 1000);
+    const codec = audioStream?.codec_name ?? fmt.format_name?.split(",")[0] ?? "unknown";
+
+    return {
+      filePath,
+      fileName: basename(filePath),
+      durationSec,
+      sizeMb,
+      codec,
+      bitrate,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatDuration(sec: number): string {
+  if (!sec) return "?:??";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function estimateTime(durationSec: number, gpu: boolean): string {
+  if (!durationSec) return "?";
+  // CPU: ~1.5x realtime on Ryzen 7 2700x with medium.en
+  // GPU: ~0.12x realtime on Vega 56 via Vulkan with medium.en (~8x faster than CPU)
+  const ratio = gpu ? 0.12 : 1.5;
+  const estSec = Math.round(durationSec * ratio);
+  if (estSec < 60) return `~${estSec}s`;
+  return `~${Math.round(estSec / 60)}m`;
+}
+
+function padEnd(str: string, len: number): string {
+  return str.length >= len ? str.slice(0, len) : str + " ".repeat(len - str.length);
+}
+
+
 function needsConversion(filePath: string): boolean {
   return !NATIVE_EXTENSIONS.includes(extname(filePath).toLowerCase());
 }
@@ -227,7 +296,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.5.0" },
+  { name: "whisper-windows-mcp", version: "1.6.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -306,6 +375,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {} },
     },
     {
+      name: "analyze_media",
+      description:
+        "Analyze one or more media files using FFprobe before transcribing. " +
+        "For a single file: returns duration, size, codec, and estimated transcription time on CPU and GPU. " +
+        "For a folder: scans all supported media files and returns a sorted table with the same info for each. " +
+        "Use this to plan batch work, estimate how long transcription will take, or check what's already been transcribed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Absolute Windows path to a single file or a folder.",
+          },
+          sort_by: {
+            type: "string",
+            enum: ["duration", "name", "size"],
+            description: "For folder scans: sort order. Defaults to duration (shortest first).",
+            default: "duration",
+          },
+        },
+        required: ["path"],
+      },
+    },
+    {
       name: "check_system",
       description:
         "Detect GPU hardware and verify Vulkan acceleration is available. " +
@@ -341,6 +434,111 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `Threads:     ${WHISPER_THREADS} of ${SYSTEM_THREADS} logical cores\n` +
           `FFmpeg:      ${ffmpegStatus}\n\n` +
           `Optional env vars: WHISPER_THREADS, FFMPEG_PATH`,
+      }],
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // analyze_media
+  // -------------------------------------------------------------------------
+  if (name === "analyze_media") {
+    const targetPath = args?.path as string;
+    const sortBy = (args?.sort_by as string) || "duration";
+
+    if (!targetPath) return { content: [{ type: "text", text: "path is required." }], isError: true };
+    if (!existsSync(targetPath)) return { content: [{ type: "text", text: `Path not found: ${targetPath}` }], isError: true };
+
+    // Check ffprobe is available
+    const ffprobePath = FFMPEG_PATH.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1").replace(/ffmpeg$/i, "ffprobe");
+    try {
+      await execFileAsync(ffprobePath, ["-version"], { windowsHide: true });
+    } catch {
+      return {
+        content: [{ type: "text", text: "ffprobe not found. FFprobe is bundled with FFmpeg — make sure FFmpeg is installed and in your PATH." }],
+        isError: true,
+      };
+    }
+
+    const vulkan = hasVulkanDll();
+
+    // Single file
+    const { statSync } = await import("fs");
+    const stat = statSync(targetPath);
+
+    if (stat.isFile()) {
+      const info = await probeFile(targetPath);
+      if (!info) {
+        return { content: [{ type: "text", text: `Could not probe file: ${targetPath}\nMake sure it is a supported media file.` }], isError: true };
+      }
+      const txtPath = targetPath.replace(/\.[^.]+$/, ".txt");
+      const transcribed = existsSync(txtPath) ? "✅ already transcribed" : "⬜ not yet transcribed";
+
+      return {
+        content: [{
+          type: "text",
+          text:
+            `📄 ${info.fileName}\n` +
+            `${"─".repeat(40)}\n` +
+            `Duration:   ${formatDuration(info.durationSec)}\n` +
+            `Size:       ${info.sizeMb.toFixed(1)} MB\n` +
+            `Codec:      ${info.codec}\n` +
+            `Bitrate:    ${info.bitrate} kbps\n` +
+            `Status:     ${transcribed}\n\n` +
+            `Estimated transcription time:\n` +
+            `  CPU:  ${estimateTime(info.durationSec, false)}\n` +
+            `  GPU:  ${estimateTime(info.durationSec, true)}${vulkan ? "" : " (⚠️ Vulkan not detected — GPU estimate may not apply)"}`,
+        }],
+      };
+    }
+
+    // Folder scan
+    const files = getFiles(targetPath, false);
+    if (files.length === 0) {
+      return { content: [{ type: "text", text: `No supported media files found in: ${targetPath}` }], isError: true };
+    }
+
+    const results: MediaInfo[] = [];
+    for (const f of files) {
+      const info = await probeFile(f);
+      if (info) results.push(info);
+    }
+
+    // Sort
+    if (sortBy === "name") results.sort((a, b) => a.fileName.localeCompare(b.fileName));
+    else if (sortBy === "size") results.sort((a, b) => a.sizeMb - b.sizeMb);
+    else results.sort((a, b) => a.durationSec - b.durationSec); // duration default
+
+    const totalDuration = results.reduce((acc, r) => acc + r.durationSec, 0);
+    const totalSize = results.reduce((acc, r) => acc + r.sizeMb, 0);
+    const transcribedCount = results.filter(r => existsSync(r.filePath.replace(/\.[^.]+$/, ".txt"))).length;
+
+    const header =
+      `${padEnd("File", 36)} ${padEnd("Duration", 8)} ${padEnd("Size", 8)} ${padEnd("CPU est", 8)} ${padEnd("GPU est", 8)} Status\n` +
+      `${"─".repeat(90)}\n`;
+
+    const rows = results.map(r => {
+      const done = existsSync(r.filePath.replace(/\.[^.]+$/, ".txt")) ? "✅" : "⬜";
+      return (
+        `${padEnd(r.fileName, 36)} ` +
+        `${padEnd(formatDuration(r.durationSec), 8)} ` +
+        `${padEnd(r.sizeMb.toFixed(1) + " MB", 8)} ` +
+        `${padEnd(estimateTime(r.durationSec, false), 8)} ` +
+        `${padEnd(estimateTime(r.durationSec, true), 8)} ` +
+        done
+      );
+    }).join("\n");
+
+    const summary =
+      `\n${"─".repeat(90)}\n` +
+      `${results.length} files | Total duration: ${formatDuration(totalDuration)} | Total size: ${totalSize.toFixed(1)} MB\n` +
+      `Transcribed: ${transcribedCount}/${results.length}\n` +
+      `Total est. CPU time: ${estimateTime(totalDuration, false)} | Total est. GPU time: ${estimateTime(totalDuration, true)}` +
+      (vulkan ? "" : "\n⚠️  ggml-vulkan.dll not detected — GPU estimates may not apply");
+
+    return {
+      content: [{
+        type: "text",
+        text: `Media analysis: ${targetPath}\n\n${header}${rows}${summary}`,
       }],
     };
   }
@@ -534,7 +732,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.5.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v1.6.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {
