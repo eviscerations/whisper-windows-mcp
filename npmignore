@@ -1,0 +1,7 @@
+src/
+*.bak
+FUNDING.yml
+ROADMAP.md
+TROUBLESHOOTING.md
+.gitignore
+tsconfig.json
