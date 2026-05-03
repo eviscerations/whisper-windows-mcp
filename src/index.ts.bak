@@ -177,7 +177,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.4.0" },
+  { name: "whisper-windows-mcp", version: "1.3.1" },
   { capabilities: { tools: {} } }
 );
 
@@ -437,7 +437,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.4.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v1.3.1 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {
