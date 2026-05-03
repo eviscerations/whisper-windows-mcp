@@ -252,6 +252,150 @@ async function readJobProgress(jobId: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Sequential batch with validation (Priority 6)
+// ---------------------------------------------------------------------------
+interface BatchFile {
+  filePath: string;
+  fileName: string;
+  durationSec: number;
+  status: "pending" | "running" | "complete" | "failed";
+  jobId?: string;
+  failReason?: string;
+}
+
+interface BatchState {
+  batchId: string;
+  batchPath: string;
+  folder: string;
+  startTime: string;
+  files: BatchFile[];
+  currentIndex: number;
+  status: "running" | "complete";
+  model: string;
+  language: string;
+  threads: number;
+}
+
+function validateTranscript(txtPath: string, durationSec: number): { valid: boolean; reason?: string } {
+  if (!existsSync(txtPath)) return { valid: false, reason: "output file missing" };
+  const content = readFileSync(txtPath, "utf8").trim();
+  if (!content) return { valid: false, reason: "output file is empty" };
+  const lines = content.split(/\n/).filter(l => l.trim()).length;
+  const minExpected = Math.max(1, Math.floor(durationSec / 30));
+  if (lines < minExpected) {
+    return { valid: false, reason: `only ${lines} line(s) for ${Math.round(durationSec)}s audio (expected ≥${minExpected})` };
+  }
+  return { valid: true };
+}
+
+async function spawnNextBatchJob(state: BatchState): Promise<void> {
+  for (let i = state.currentIndex; i < state.files.length; i++) {
+    if (state.files[i].status === "pending") {
+      state.currentIndex = i;
+      state.files[i].status = "running";
+      const f = state.files[i];
+      const { jobId } = await spawnDetached(f.filePath, state.model, state.language, state.threads);
+      state.files[i].jobId = jobId;
+      writeFileSync(state.batchPath, JSON.stringify(state, null, 2), "utf8");
+      return;
+    }
+  }
+  // Nothing left to run
+  state.status = "complete";
+  writeFileSync(state.batchPath, JSON.stringify(state, null, 2), "utf8");
+}
+
+async function readBatchProgress(batchId: string): Promise<string> {
+  const batchPath = join(JOBS_DIR, `${batchId}.batch.json`);
+  if (!existsSync(batchPath)) {
+    return `❌ Batch not found: ${batchId}\n\nThe batch file may have been deleted or the ID is incorrect.`;
+  }
+
+  const state: BatchState = JSON.parse(readFileSync(batchPath, "utf8"));
+
+  // Check current running job
+  const running = state.files.find(f => f.status === "running");
+  if (running && running.jobId) {
+    const jobPath = join(JOBS_DIR, `${running.jobId}.json`);
+    if (existsSync(jobPath)) {
+      const job = JSON.parse(readFileSync(jobPath, "utf8"));
+      const isRunning = await isPidRunning(job.pid);
+      const outputExists = existsSync(job.outputPath);
+
+      if (!isRunning) {
+        // Job finished — validate and advance
+        const validation = validateTranscript(job.outputPath, running.durationSec);
+        if (outputExists && validation.valid) {
+          running.status = "complete";
+        } else {
+          running.status = "failed";
+          running.failReason = validation.reason ?? "no output file";
+        }
+        // Advance to next
+        state.currentIndex = state.files.indexOf(running) + 1;
+        if (state.files.some(f => f.status === "pending")) {
+          await spawnNextBatchJob(state);
+        } else {
+          state.status = "complete";
+          writeFileSync(batchPath, JSON.stringify(state, null, 2), "utf8");
+        }
+      } else {
+        // Still running — update state file without advancing
+        writeFileSync(batchPath, JSON.stringify(state, null, 2), "utf8");
+      }
+    }
+  } else if (state.status !== "complete" && state.files.some(f => f.status === "pending")) {
+    // No running job but pending files exist — advance
+    await spawnNextBatchJob(state);
+  }
+
+  // Build status report
+  const done = state.files.filter(f => f.status === "complete").length;
+  const failed = state.files.filter(f => f.status === "failed");
+  const pending = state.files.filter(f => f.status === "pending").length;
+  const currentRunning = state.files.find(f => f.status === "running");
+  const total = state.files.length;
+  const elapsed = Math.round((Date.now() - new Date(state.startTime).getTime()) / 1000);
+
+  let report = `Batch: ${batchId}\n`;
+  report += `Folder: ${state.folder}\n`;
+  report += `${"─".repeat(50)}\n`;
+  report += `Progress: ${done}/${total} complete`;
+  if (failed.length > 0) report += ` | ${failed.length} failed`;
+  if (pending > 0) report += ` | ${pending} remaining`;
+  report += `\nElapsed: ${formatDuration(elapsed)}\n`;
+
+  if (currentRunning) {
+    report += `\nCurrently processing: ${currentRunning.fileName}`;
+    if (currentRunning.jobId) {
+      const jobPath = join(JOBS_DIR, `${currentRunning.jobId}.json`);
+      if (existsSync(jobPath)) {
+        const job = JSON.parse(readFileSync(jobPath, "utf8"));
+        const logContent = existsSync(job.logPath) ? readFileSync(job.logPath, "utf8") : "";
+        const lastSec = parseLastTimestamp(logContent);
+        if (lastSec > 0) report += ` (${formatDuration(lastSec)} / ${formatDuration(currentRunning.durationSec)})`;
+      }
+    }
+  }
+
+  if (failed.length > 0) {
+    report += `\n\n⚠️  Failed files:\n`;
+    for (const f of failed) {
+      report += `  ❌ ${f.fileName} — ${f.failReason ?? "unknown reason"}\n`;
+    }
+    report += `\nRe-run failed files with transcribe_audio individually.`;
+  }
+
+  if (state.status === "complete") {
+    report = `✅ Batch complete!\n\n` + report;
+  } else {
+    report += `\n\nCall check_batch_progress again to update.`;
+  }
+
+  return report;
+}
+
+// ---------------------------------------------------------------------------
 // GPU / system detection (Priority 9)
 // ---------------------------------------------------------------------------
 interface GpuInfo {
@@ -474,7 +618,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "1.7.0" },
+  { name: "whisper-windows-mcp", version: "1.8.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -566,6 +710,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "check_config",
       description: "Verify whisper-cli.exe, model, and FFmpeg are all available. Run this first if anything fails.",
       inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "start_batch",
+      description:
+        "Start an automated sequential batch transcription of all untranscribed files in a folder. " +
+        "Scans for files without a matching .txt, sorts by duration (shortest first), " +
+        "and processes them one at a time as background jobs. " +
+        "Each file is validated after completion — empty or suspiciously short outputs are flagged. " +
+        "Returns a batch ID to use with check_batch_progress.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          folder_path: { type: "string", description: "Absolute Windows path to the folder." },
+          language: { type: "string", description: "Language code. Defaults to en.", default: "en" },
+          threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
+        },
+        required: ["folder_path"],
+      },
+    },
+    {
+      name: "check_batch_progress",
+      description:
+        "Check the status of a batch started with start_batch. " +
+        "Automatically advances to the next file when the current one finishes. " +
+        "Returns overall progress, current file, failed files, and elapsed time. " +
+        "Call repeatedly until the batch shows as complete.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          batch_id: { type: "string", description: "Batch ID returned by start_batch." },
+        },
+        required: ["batch_id"],
+      },
     },
     {
       name: "analyze_media",
@@ -844,6 +1021,96 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   // -------------------------------------------------------------------------
+  // start_batch
+  // -------------------------------------------------------------------------
+  if (name === "start_batch") {
+    const folderPath = args?.folder_path as string;
+    const language = (args?.language as string) || "en";
+    const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
+
+    if (!folderPath) return { content: [{ type: "text", text: "folder_path is required." }], isError: true };
+    if (!existsSync(folderPath)) return { content: [{ type: "text", text: `Folder not found: ${folderPath}` }], isError: true };
+    const configError = validatePaths();
+    if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+
+    if (await isWhisperRunning()) {
+      return { content: [{ type: "text", text: "A transcription is already running. Wait for it to finish before starting a batch." }], isError: true };
+    }
+
+    // Scan for untranscribed files
+    const allFiles = getFiles(folderPath, false);
+    const untranscribed = allFiles.filter(f => !existsSync(f.replace(/\.[^.]+$/, ".txt")));
+
+    if (untranscribed.length === 0) {
+      return { content: [{ type: "text", text: `✅ All files in ${folderPath} are already transcribed. Nothing to do.` }] };
+    }
+
+    // Probe durations for sorting
+    const batchFiles: BatchFile[] = [];
+    for (const f of untranscribed) {
+      const info = await probeFile(f);
+      batchFiles.push({
+        filePath: f,
+        fileName: basename(f),
+        durationSec: info?.durationSec ?? 0,
+        status: "pending",
+      });
+    }
+    batchFiles.sort((a, b) => a.durationSec - b.durationSec);
+
+    ensureJobsDir();
+    const batchId = `batch_${Date.now()}`;
+    const batchPath = join(JOBS_DIR, `${batchId}.batch.json`);
+
+    const state: BatchState = {
+      batchId,
+      batchPath,
+      folder: folderPath,
+      startTime: new Date().toISOString(),
+      files: batchFiles,
+      currentIndex: 0,
+      status: "running",
+      model: WHISPER_MODEL,
+      language,
+      threads,
+    };
+
+    writeFileSync(batchPath, JSON.stringify(state, null, 2), "utf8");
+    await spawnNextBatchJob(state);
+
+    const totalDuration = batchFiles.reduce((acc, f) => acc + f.durationSec, 0);
+
+    return {
+      content: [{
+        type: "text",
+        text:
+          `⏳ Batch started!\n\n` +
+          `Batch ID: ${batchId}\n` +
+          `Folder: ${folderPath}\n` +
+          `Files to process: ${batchFiles.length}\n` +
+          `Total audio: ${formatDuration(totalDuration)}\n` +
+          `Est. GPU time: ${estimateTime(totalDuration, hasVulkanDll())}\n\n` +
+          `First file: ${batchFiles[0].fileName}\n\n` +
+          `Call check_batch_progress with batch_id="${batchId}" to monitor.`,
+      }],
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // check_batch_progress
+  // -------------------------------------------------------------------------
+  if (name === "check_batch_progress") {
+    const batchId = args?.batch_id as string;
+    if (!batchId) return { content: [{ type: "text", text: "batch_id is required." }], isError: true };
+    try {
+      const result = await readBatchProgress(batchId);
+      return { content: [{ type: "text", text: result }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error reading batch progress:\n\n${err?.message || String(err)}` }], isError: true };
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // generate_subtitles
   // -------------------------------------------------------------------------
   if (name === "generate_subtitles") {
@@ -967,7 +1234,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v1.7.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v1.8.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {
