@@ -1,9 +1,9 @@
 # whisper-windows-mcp
 
-Windows向けのMCP（Model Context Protocol）サーバーです。[whisper.cpp](https://github.com/ggml-org/whisper.cpp)を使用して、Claude Desktopで音声・動画ファイルをローカルで文字起こしできます。GPU加速、多言語対応、バッチ処理に対応しています。インターネット接続不要。音声データは一切外部に送信されません。
+Windows向けのネイティブMCP（Model Context Protocol）サーバーです。[whisper.cpp](https://github.com/ggml-org/whisper.cpp)を使用して、Claude Desktopで音声・動画ファイルをローカルに文字起こしできます。GPU加速、多言語対応、バッチ処理に対応しています。インターネット接続は不要です。音声データが外部に送信されることは一切ありません。
 
-> **なぜこのツールが存在するか**
-> 人気のある`whisper-mcp`パッケージはmacOS向けに作られており、Unix環境を前提としています。Windowsでは動作しません。このパッケージは、Claude DesktopでローカルAI文字起こしを使いたいWindowsユーザーのために作られました。
+> **なぜこのパッケージが存在するのか？**
+> 人気の`whisper-mcp`パッケージはmacOS向けに構築されており、Unix環境を前提としています。Windowsでは動作しません。このパッケージは、Claude DesktopでローカルなウィンドウズネイティブのAI文字起こしを求めるWindowsユーザーのために作られました。
 
 ---
 
@@ -12,20 +12,23 @@ Windows向けのMCP（Model Context Protocol）サーバーです。[whisper.cpp
 インストール後、Claude Desktopで以下のように話しかけるだけで使えます：
 
 - *「C:\Users\Me\Downloads\meeting.mp3を文字起こしして」*
-- *「このフォルダの録音ファイルをすべて文字起こしして、テキストファイルに保存して」*
-- *「この動画の日本語と英語の字幕ファイルを作って」*
-- *「このフォルダのファイルをすべてバッチ文字起こしして」*
-- *「これらのファイルの文字起こしにどれくらいかかる？」*
-- *「GPU加速が有効かどうか確認して」*
+- *「このフォルダの録音ファイルをすべて文字起こしして、それぞれテキストファイルに保存して」*
+- *「このビデオの日本語と英語の字幕を生成して」*
+- *「このフォルダのバッチ文字起こしを開始して」*
+- *「これらのファイルの文字起こしにかかる時間はどれくらい？」*
+- *「GPU加速が有効か確認して」*
+- *「インストール済みのモデルを一覧表示して」*
+- *「large-v3-turboをダウンロードして」*
+- *「large-v3-turboモデルに切り替えて」*
 
 ---
 
-## 必要なもの
+## 必要条件
 
 1. **Node.js 18以降** — [nodejs.org](https://nodejs.org)
 2. **Vulkan GPU対応のwhisper.cppバイナリ** — ステップ1参照
 3. **Whisperモデルファイル** — ステップ2参照
-4. **FFmpeg** — 動画ファイルやWAV/MP3以外の音声形式に必要
+4. **FFmpeg** — 動画ファイルと非WAV/MP3音声に必要
 
 ---
 
@@ -35,9 +38,9 @@ Windows向けのMCP（Model Context Protocol）サーバーです。[whisper.cpp
 
 [リリースページ](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0)から`whisper-vulkan-win-x64.zip`をダウンロードしてください。
 
-これは**Vulkan GPU加速**を有効にしてカスタムコンパイルされたビルドです。AMD、NVIDIA、Intel GPUで動作します。ベンダー固有のSDKは不要です。
+これは**Vulkan GPU加速**が有効なカスタムビルドです。AMD、NVIDIA、Intel GPUで動作します — ベンダー固有のSDKは不要です。
 
-`C:\whisper\Release\`に展開してください。以下のファイルが揃っていることを確認してください：
+`C:\whisper\Release\`に展開してください。以下のファイルが揃っているか確認してください：
 
 ```
 C:\whisper\Release\whisper-cli.exe
@@ -48,11 +51,11 @@ C:\whisper\Release\ggml-cpu.dll
 C:\whisper\Release\whisper.dll
 ```
 
-GPU加速は自動的に有効になります。追加設定は不要です。
+GPU加速は自動で有効になります — 追加設定は不要です。
 
 ### オプションB — ソースからビルド
 
-必要なもの：Git、CMake、「C++によるデスクトップ開発」ワークロードを含むVisual Studio Build Tools 2022以降、[lunarg.com](https://vulkan.lunarg.com/sdk/home#windows)のVulkan SDK。
+必要なもの：Git、CMake、Visual Studio Build Tools 2022+（「C++によるデスクトップ開発」）、[lunarg.com](https://vulkan.lunarg.com/sdk/home#windows)のVulkan SDK。
 
 ```
 git clone https://github.com/ggml-org/whisper.cpp
@@ -61,9 +64,9 @@ cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --target whisper-cli
 ```
 
-`build\bin\Release\`のバイナリを`C:\whisper\Release\`にコピーしてください。
+`build\bin\Release\`からバイナリを`C:\whisper\Release\`にコピーしてください。
 
-> **注意：** GitHub上の公式whisper.cpp WindowsリリースにはVulkanビルドが含まれていません。上記のビルド済みリリースを使用するか、`-DGGML_VULKAN=ON`でソースからビルドしてください。
+> **注意：** GitHubの公式whisper.cpp WindowsリリースにはVulkanビルドが含まれていません。上記のビルド済みリリースを使用するか、`-DGGML_VULKAN=ON`でソースからコンパイルする必要があります。
 
 ---
 
@@ -71,27 +74,23 @@ cmake --build build --config Release --target whisper-cli
 
 | モデル | サイズ | 速度 | 精度 | 用途 |
 |---|---|---|---|---|
-| `ggml-tiny.en.bin` | 75 MB | 非常に速い | 基本 | 動作確認用 |
-| `ggml-base.en.bin` | 142 MB | 速い | 良い | 日常的な英語 |
-| `ggml-small.en.bin` | 466 MB | 普通 | より良い | 重要な録音 |
-| `ggml-medium.en.bin` | 1.5 GB | GPU使用時は速い | 非常に良い | 高品質な英語 |
-| `ggml-large-v3.bin` | 2.9 GB | GPU使用時は速い | 最高 | 多言語・最高精度 |
+| `ggml-tiny.en.bin` | 75 MB | 非常に高速 | 基本 | 動作確認 |
+| `ggml-base.en.bin` | 142 MB | 高速 | 良好 | 日常的な英語 |
+| `ggml-small.en.bin` | 466 MB | 中程度 | より良好 | 重要な録音 |
+| `ggml-medium.en.bin` | 1.5 GB | GPUで高速 | 非常に良好 | 最高品質の英語 |
+| `ggml-large-v3-turbo.bin` | 1.6 GB | GPUで高速 | 優秀 | **英語GPUバッチ処理の推奨 — large-v3の約6倍高速で精度損失は最小限** |
+| `ggml-large-v3.bin` | 2.9 GB | GPUで高速 | 優秀 | 多言語、最高精度 |
+| `ggml-medium.en-q5_0.bin` | 514 MB | 高速 | 非常に良好 | **CPU専用英語の最良選択 — 低メモリで高精度** |
+| `ggml-large-v3-turbo-q5_0.bin` | 547 MB | 高速 | 優秀 | **CPU専用多言語の最良選択** |
+| `ggml-large-v3-q5_0.bin` | 1.1 GB | CPUで中程度 | 優秀 | 多言語、CPU対応 |
 
-**英語のみ**の場合：`base.en`または`medium.en`がおすすめです。
-**多言語対応**（自動検出、外国語、翻訳）の場合：最良の結果を得るには`large-v3`を使用してください。
-
-Hugging Faceからダウンロード：
-```
-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin
-```
-
-`C:\whisper\models\`に保存してください。
+Claude Desktopで`download_model`を使用して直接インストールできます。**英語専用**の場合：`large-v3-turbo`（GPU）または`medium.en-q5_0`（CPU）がおすすめです。**多言語**の場合：`large-v3-turbo`または`large-v3-turbo-q5_0`（CPU）が必要です。英語専用モデル（`*.en.bin`）は英語以外の音声に`[FOREIGN]`を出力し、他の言語には使用できません。
 
 ---
 
 ## ステップ3 — FFmpegのインストール
 
-動画ファイルやネイティブ以外の音声形式に必要です。
+FFmpegは動画ファイルと非ネイティブ音声フォーマットに必要です。
 
 wingetでインストール：
 ```
@@ -117,7 +116,7 @@ npm install -g whisper-windows-mcp
 
 ## ステップ5 — Claude Desktopの設定
 
-Claude Desktop → 設定 → 開発者 → 設定ファイルを編集 を開いてください。
+Claude Desktop → 設定 → 開発者 → 設定を編集。
 
 `whisper`エントリを追加してください：
 
@@ -138,92 +137,162 @@ Claude Desktop → 設定 → 開発者 → 設定ファイルを編集 を開�
 
 設定ファイルの場所：`C:\Users\ユーザー名\AppData\Roaming\Claude\claude_desktop_config.json`
 
-> パスには必ず**バックスラッシュを2つ**使用してください（`C:\\whisper\\...`）。
+> すべてのパスに**バックスラッシュを2つ**使用してください。
 
-保存後、Claude Desktopを**完全に再起動**してください。設定 → 開発者に**whisper**が緑色の実行中バッジで表示されれば成功です。
+保存後、Claude Desktopを**完全に再起動**してください。設定 → 開発者で**whisper**が緑色の実行中バッジで表示されるはずです。
 
 ---
 
-## ステップ6 — 動作確認
+## ステップ6 — セットアップの確認
 
-Claude Desktopで以下を入力してください：
+Claude Desktopで以下を確認してください：
 
 > *「whisperの設定を確認して」*
 
 次に：
 
-> *「システムのハードウェアを確認して」*
+> *「システムハードウェアを確認して」*
 
-GPUが検出され、Vulkan加速が有効であることを確認できます。
+GPUが検出されVulkan加速が有効になっていることを確認します。
 
 ---
 
 ## 利用可能なツール
 
-### `transcribe_audio`（音声文字起こし）
-単一ファイルを文字起こしします。ブロッキング（デフォルト）またはバックグラウンドモードに対応。
+### `transcribe_audio`
+単一ファイルを文字起こしします。長いファイルにはブロッキング（デフォルト）またはバックグラウンドモードに対応しています。
 
 | パラメータ | 説明 |
 |---|---|
-| `file_path` | ファイルの絶対パス（必須） |
+| `file_path` | ファイルへの絶対パス（必須） |
 | `language` | 言語コード（`en`、`ja`、`es`など）または`auto`で自動検出。デフォルト：`en` |
 | `output_format` | `text`（デフォルト）、`timestamps`、`json`、`srt` |
-| `save_to_file` | ソースファイルの隣に.txtとして保存 |
-| `background` | バックグラウンドジョブとして実行し、ジョブIDをすぐに返す。10分超のファイルに推奨。`check_progress`で監視。 |
+| `save_to_file` | ソースファイルの隣にtxtとして保存 |
+| `background` | バックグラウンドジョブとして実行 — ジョブIDを即座に返します。`check_progress`で監視。10分以上のファイルに推奨。 |
 | `threads` | CPUスレッド数の上書き |
+| `temperature` | サンプリング温度0.0〜1.0。デフォルト0.0（決定論的）。高い値はノイズの多い音声でのハルシネーションを軽減します。 |
+| `prompt` | 事前コンテキスト文字列 — ドメイン固有の語彙や話者名の精度を向上させます。例：`"名前：Keemstar、DramaAlert"` |
+| `condition_on_prev_text` | セグメント間のコンテキスト条件付けを再有効化。デフォルトfalse。 |
+| `beam_size` | ビームサーチの幅。高いほど精度向上、処理速度低下。デフォルト5。 |
+| `best_of` | 評価する候補シーケンス数。デフォルト5。 |
+| `gpu_device` | マルチGPUシステムのGPUデバイスインデックス。デフォルト0。 |
+| `processors` | 並列プロセッサ数。デフォルト1。 |
+| `word_timestamps` | タイムスタンプ付き1単語ごとのセグメント出力。クリップ位置合わせに有用。 |
+| `max_segment_length` | セグメントの最大文字数。 |
+| `diarize` | ステレオ話者識別 — 別々のチャンネルに話者が録音されたステレオ音声が必要。 |
+| `vad_model` | Silero VADモデル.binへのパス。文字起こし前に無音を除去してハルシネーションを軽減します。 |
+| `offset_t` | 開始オフセット（ミリ秒）。 |
+| `duration` | オフセットからの処理時間（ミリ秒）。 |
 
 ---
 
-### `check_progress`（進捗確認）
-`transcribe_audio`（background=true）で開始したジョブを監視します。経過時間、最後に処理したタイムスタンプ、完了時の文字起こし全文を返します。
+### `check_progress`
+`transcribe_audio`（background=true）で開始したバックグラウンド文字起こしジョブを監視します。
 
----
-
-### `start_batch`（バッチ開始）
-フォルダ内の未文字起こしファイルを自動的に順次文字起こしします。時間順（短い順）にソートし、バックグラウンドジョブとして1つずつ処理し、各出力を検証します。
-
----
-
-### `check_batch_progress`（バッチ進捗確認）
-実行中のバッチを監視します。現在のファイルが完了すると自動的に次のファイルに進みます。全体の進捗、現在のファイルとタイムスタンプ、失敗したファイルを返します。
-
----
-
-### `transcribe_batch`（インタラクティブバッチ）
-1ファイルずつプレビューと確認を挟みながら処理します。進行状況を確認しながら作業したい場合に便利です。
-
----
-
-### `generate_subtitles`（字幕生成）
-SRT字幕ファイルを生成します。言語自動検出と英語翻訳出力に対応。
+経過時間、最後に処理されたタイムスタンプ、完了時のトランスクリプト全文を返します。
 
 | パラメータ | 説明 |
 |---|---|
-| `file_path` | ファイルのパス（必須） |
-| `language` | 言語コードまたは`auto`で自動検出。デフォルト：`en` |
-| `translate_to_english` | 英語翻訳の`.en.srt`も生成する。ソースが英語でない場合のみ適用。 |
+| `job_id` | `transcribe_audio`が返したジョブID |
+
+---
+
+### `list_models`
+モデルディレクトリにインストール済みのWhisperモデルファイルを一覧表示します。ファイル名、サイズ、現在アクティブかどうか、量子化状態、推奨用途を表示します。ネットワーク接続不要。
+
+---
+
+### `download_model`
+Hugging Faceからモデルファイルを直接モデルディレクトリにダウンロードします。モデル名（例：`large-v3-turbo`、`medium.en-q5_0`）を受け取り、ダウンロードを自動処理します。信頼されたHugging Faceネームスペースからのみダウンロードします。ダウンロード後、`switch_model`でアクティベートしてください。
+
+| パラメータ | 説明 |
+|---|---|
+| `model_name` | ダウンロードするモデル名（例：`large-v3-turbo`、`large-v3-turbo-q5_0`、`medium.en-q5_0`） |
+
+---
+
+### `switch_model`
+Claude Desktopを再起動せずに現在のセッションのアクティブモデルを切り替えます。変更はセッションスコープです — 再起動後には保存されません。永続的にするには、設定の`WHISPER_MODEL`を更新してください。
+
+| パラメータ | 説明 |
+|---|---|
+| `model_name` | モデルファイル名（例：`ggml-large-v3-turbo.bin`）または完全パス。設定済みモデルディレクトリ内の`.bin`ファイルである必要があります。 |
+
+---
+
+### `start_batch`
+フォルダ内の未文字起こしファイルをすべて自動順次バッチ文字起こしします。時間順（短いものから）にソートし、バックグラウンドジョブとして1つずつ処理し、各出力を検証します。
+
+| パラメータ | 説明 |
+|---|---|
+| `folder_path` | フォルダへのパス（必須） |
+| `language` | 言語コード。デフォルト：`en` |
 | `threads` | CPUスレッド数の上書き |
 
-ネイティブと翻訳の両方を要求した場合、2つのファイルが保存されます：
-- `ファイル名.ja.srt` — 元の言語
+---
+
+### `check_batch_progress`
+実行中のバッチを監視します。現在のファイルが完了すると自動的に次のファイルに進みます。全体の進捗、タイムスタンプ付きの現在ファイル、ETA、失敗したファイルを返します。
+
+| パラメータ | 説明 |
+|---|---|
+| `batch_id` | `start_batch`が返したバッチID |
+
+---
+
+### `transcribe_batch`（インタラクティブ）
+プレビューと確認を行いながら1ファイルずつ処理します。進めながらレビューしたい場合に便利です。
+
+| パラメータ | 説明 |
+|---|---|
+| `folder_path` | フォルダへのパス（必須） |
+| `file_index` | 処理するファイル（1始まり）。省略するとファイル一覧を表示。 |
+| `language` | 言語コード。デフォルト：`en` |
+| `recursive` | サブフォルダを含める |
+
+---
+
+### `generate_subtitles`
+字幕ファイルを生成します。`language='auto'`で話されている言語を自動検出できます。`translate_to_english=true`で英語翻訳字幕ファイルも生成します。
+
+両方をリクエストした場合、2つの.srtファイルが保存されます：
+- `ファイル名.ja.srt` — 原語
 - `ファイル名.en.srt` — 英語翻訳
 
-> whisperの組み込み翻訳は**英語へのみ**翻訳できます。他の言語への翻訳には別途翻訳ツールが必要です。
+> Whisperの組み込み翻訳は**英語へのみ**対応しています。他の言語への翻訳は、.srtファイルの内容を別途翻訳してください。
+
+| パラメータ | 説明 |
+|---|---|
+| `file_path` | ファイルへのパス（必須） |
+| `language` | 言語コードまたは`auto`で自動検出。デフォルト：`en` |
+| `translate_to_english` | 英語翻訳.srtも生成。ソースが英語以外の場合のみ適用。 |
+| `background` | バックグラウンドジョブとして実行。10分以上のファイルに推奨。 |
+| `threads` | CPUスレッド数の上書き |
+| `temperature` | サンプリング温度0.0〜1.0。デフォルト0.0。 |
+| `prompt` | ドメイン固有の語彙や話者名のための事前コンテキスト文字列。 |
+| `beam_size` | ビームサーチの幅。デフォルト5。 |
+| `diarize` | ステレオ話者識別。 |
+| `vad_model` | Silero VADモデルへのパス。 |
 
 ---
 
-### `analyze_media`（メディア分析）
-文字起こし前にファイルを分析します。時間、サイズ、コーデック、CPUとGPUでの推定文字起こし時間を返します。フォルダの場合は、すべてのファイルをテーブル形式で表示します。
+### `analyze_media`
+文字起こし前にファイルを分析します。時間、サイズ、コーデック、推定文字起こし時間（CPUとGPU）を返します。フォルダの場合、文字起こし状態付きの全ファイル一覧を表示します。
+
+| パラメータ | 説明 |
+|---|---|
+| `path` | 単一ファイルまたはフォルダへのパス（必須） |
+| `sort_by` | フォルダの場合：`duration`（デフォルト）、`name`、`size` |
 
 ---
 
-### `check_config`（設定確認）
-whisper-cli.exe、モデルファイル、FFmpegがすべてアクセス可能かを確認します。問題が発生した場合はまずこれを実行してください。
+### `check_config`
+whisper-cli.exe、モデルファイル、FFmpegがすべてアクセス可能か確認します。問題が発生した場合はまずこれを実行してください。
 
 ---
 
-### `check_system`（システム確認）
-GPUハードウェアを検出し、Vulkan加速が利用可能かを確認します。GPU名、VRAM、`ggml-vulkan.dll`の有無、ハードウェアに適したモデルサイズを報告します。
+### `check_system`
+GPUハードウェアを検出しVulkan加速が利用可能か確認します。GPU名、VRAM、`ggml-vulkan.dll`の有無を報告し、ハードウェアに最適なモデルサイズを推奨します。
 
 ---
 
@@ -239,61 +308,79 @@ GPUハードウェアを検出し、Vulkan加速が利用可能かを確認し�
 
 ## GPU加速
 
-ビルド済みVulkanリリースにより、GPU加速が自動的に有効になります。AMD Radeon RX Vega 56（GCN第5世代）で動作確認済み。Vulkan 1.0以上をサポートするGPU（NVIDIA、Intel Arcを含む）であれば動作するはずです。
+ビルド済みVulkanリリースはGPU加速を自動で有効にします。AMD Radeon RX Vega 56（GCN第5世代）でテスト済み。Vulkan 1.0+をサポートするすべてのGPU（NVIDIAおよびIntel Arcを含む）で動作するはずです。
 
 **パフォーマンス比較（medium.enモデル、約5分の音声ファイル）：**
 
 | ハードウェア | 処理時間 |
 |---|---|
 | CPUのみ（Ryzen 7 2700x、8スレッド） | 8〜12分 |
-| GPU（Vega 56、Vulkan経由） | 20〜40秒 |
+| GPU（Vega 56 via Vulkan） | 20〜40秒 |
 
-文字起こし中のGPU使用率は約15〜20%。ファイル間はアイドル状態に戻ります。
+文字起こし中のGPU使用率は通常15〜20%で、ファイル間はアイドル状態に戻ります。CPUは約15%を維持します。
 
 ---
 
 ## 多言語対応
 
-Whisperは話されている言語を自動検出し、その言語で文字起こしができます。組み込みの翻訳モデルは**英語へのみ**翻訳します。
+Whisperは話されている言語を自動検出し、その言語で文字起こしできます。組み込みの翻訳モデルは**英語へのみ**翻訳します。
 
-多言語コンテンツには`large-v3`が**必須**です。英語専用モデル（`*.en.bin`）は英語以外の音声に`[FOREIGN]`を出力します — いかなる状況でも他の言語を検出・文字起こしすることはできません。
+最高の多言語精度には`large-v3-turbo`モデルを使用してください。英語専用モデル（`*.en.bin`）は他の言語を検出・文字起こしできません。
 
-**外国語動画の字幕作成の例：**
+**例 — 字幕付き外国語動画：**
 1. `language=auto`と`translate_to_english=true`で字幕生成を依頼
-2. Whisperが言語を検出し、元の言語のSRTを生成
+2. Whisperが言語を検出し、原語SRTを生成
 3. 2回目のパスで英語翻訳SRTを生成
-4. VLCで「字幕」→「字幕ファイルを追加」からどちらのファイルも読み込み可能
+4. VLCで「字幕」→「字幕ファイルを追加」からいずれかのファイルを読み込み
+
+---
+
+## セキュリティ
+
+whisper-windows-mcpはセキュリティを核心的な原則として設計されています。
+
+**すべての処理はローカル。** 音声、トランスクリプト、ファイルパスが外部に送信されることは一切ありません。テレメトリなし。コア機能にクラウドAPIは不要。
+
+**入力検証。** すべてのファイルパスは使用前に検証されます — UNCパス（`\\server\share`）とディレクトリトラバーサル（`..`）は拒否されます。10GBを超えるファイルはリソース枯渇を防ぐために拒否されます。
+
+**トランスクリプトインジェクション対応。** 音声ファイルには、文字起こし時に指示のように見える内容が含まれる場合があります。Claudeの組み込み防御がこれを処理しますが、MCPサーバー自体はトランスクリプトの内容をデータとして扱い、指示として解釈しないことを知っておく価値があります。
+
+**モデルダウンロードの制限。** `download_model`ツールは信頼された2つのHugging Faceネームスペース（`ggerganov/whisper.cpp`と`ggml-org`）からのみダウンロードします。任意のURLは拒否されます。リダイレクトはフォロー前に許可リストで検証されます。
+
+**モデル切り替えのサンドボックス化。** `switch_model`は設定済みモデルディレクトリ内の`.bin`ファイルのみ受け付けます。そのディレクトリ外のパスは拒否されます。
+
+**新しいネットワーク依存なし。** モデルダウンロードはNode.js組み込みの`https`を使用 — 外部HTTPライブラリはパッケージに追加されません。
 
 ---
 
 ## フリープランユーザー向け設計
 
-このツールはClaude APIの呼び出し回数を最小限に抑えるように設計されています。スキャン、分析、キュー管理、実行、検証を含む文字起こしワークフロー全体で、60ファイルのバッチ処理に必要なClaude操作は20回以下を目標としています。
+このツールはClaude APIとのやり取りを最小限に抑えるよう設計されています。文字起こしワークフロー全体（スキャン、分析、キュー管理、実行、検証）は、できるだけ少ないClaude操作で完了できるよう設計されています。重い処理はすべてローカルマシンで実行されます。
 
 ---
 
-## 環境変数（オプション）
+## オプションの環境変数
 
 | 変数 | 説明 |
 |---|---|
-| `WHISPER_CLI_PATH` | whisper-cli.exeのパス（必須） |
-| `WHISPER_MODEL` | モデル.binファイルのパス（必須） |
+| `WHISPER_CLI_PATH` | whisper-cli.exeへのパス（必須） |
+| `WHISPER_MODEL` | モデル.binファイルへのパス（必須） |
 | `WHISPER_THREADS` | CPUスレッド数の上書き |
-| `FFMPEG_PATH` | ffmpegがPATHにない場合のパス |
+| `FFMPEG_PATH` | ffmpegがシステムPATHにない場合のパス |
 
 ---
 
 ## トラブルシューティング
 
-詳細は[TROUBLESHOOTING.md](TROUBLESHOOTING.md)（英語）をご覧ください。
+詳細な解決策については[TROUBLESHOOTING.md](TROUBLESHOOTING.md)を参照してください。
 
-簡易チェックリスト：
-- 設定のパスには**バックスラッシュを2つ**使用（`C:\\whisper\\...`）
-- 設定したパスに`whisper-cli.exe`が存在する
-- 設定したパスにモデル`.bin`ファイルが存在する
-- FFmpegがインストールされPATHが通っている（`ffmpeg -version`が動作する）
-- 設定変更後にClaude Desktopを完全に再起動した
-- 設定 → 開発者でwhisperが**実行中**と表示されている
+クイックチェックリスト：
+- 設定のパスに**バックスラッシュを2つ**使用している（`C:\\whisper\\...`）
+- `whisper-cli.exe`が設定されたパスに存在する
+- モデル`.bin`ファイルが設定されたパスに存在する
+- FFmpegがインストールされPATHに含まれている（`ffmpeg -version`が動作する）
+- 設定編集後にClaude Desktopを完全に再起動した
+- 設定 → 開発者でwhisperが**実行中**（緑色バッジ）で表示されている
 
 ---
 
@@ -305,6 +392,6 @@ MIT
 
 ## コントリビュート
 
-プルリクエスト歓迎です。計画中の機能については[ROADMAP.md](ROADMAP.md)をご覧ください。
+プルリクエスト歓迎です。[ROADMAP.md](ROADMAP.md)で計画中の機能を確認してください。
 
-上記以外のハードウェアでGPU加速をテストした方は、GPU型番、VRAM、使用モデル、確認したスループットをIssueで報告してください。
+上記以外のハードウェアでGPU加速をテストした方は、GPU型番、VRAM、モデルサイズ、確認したスループットをIssueで報告してください。

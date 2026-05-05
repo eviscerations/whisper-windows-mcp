@@ -31,6 +31,30 @@ If still not showing:
 
 ---
 
+## download_model times out on large models
+
+Claude Desktop has a 4-minute timeout on MCP tool calls. Large model downloads on slow connections may exceed this.
+
+**File sizes:**
+- `large-v3` — 2.9 GB
+- `large-v3-turbo` — 1.6 GB
+- `large-v3-q5_0` — 1.1 GB
+- `large-v3-turbo-q5_0` — 547 MB
+- `medium.en` — 1.5 GB
+- `medium.en-q5_0` — 514 MB
+
+On a fast connection (100 Mbps+), even large-v3 downloads in under 4 minutes. On slower connections, use a browser or PowerShell to download directly and place the file in your models directory manually:
+
+```powershell
+# Example — download large-v3-turbo directly
+Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" `
+  -OutFile "C:\whisper\models\ggml-large-v3-turbo.bin"
+```
+
+Then use `switch_model ggml-large-v3-turbo.bin` to activate it.
+
+---
+
 ## `check_config` reports whisper-cli.exe not found
 
 The path in your config doesn't match where the file actually is.
@@ -215,15 +239,54 @@ Call `check_batch_progress` again. If still stuck:
 
 ---
 
+## Cleaning up the temp jobs directory
+
+whisper-windows-mcp writes job state and log files to `%TEMP%\whisper-mcp-jobs\` during transcription. These accumulate over time and can consume disk space, particularly the `.log` files from long transcription jobs.
+
+Once a batch or job is complete and you have verified the output transcripts, you can safely delete everything in this directory:
+
+```powershell
+Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Recurse -Force
+```
+
+The directory will be recreated automatically on the next transcription. No transcript output files are stored here permanently — they are moved to the source directory on completion. Only job metadata and logs remain.
+
+**Note:** Do not delete this directory while a transcription is in progress — the batch state files are needed for `check_batch_progress` to function.
+
+---
+
 ## Large unattended batch from the command line
 
-For very large batches where you want to run overnight without Claude:
+For very large batches where you want to run overnight without Claude, use PowerShell.
 
+**Important:** whisper-cli.exe cannot read MP4, MKV, or most video formats directly. FFmpeg must pre-convert each file to WAV first. whisper also writes its transcript to stdout and diagnostic output to stderr — use `Start-Process -RedirectStandardOutput` to capture the transcript correctly. Piping with `|` or redirecting stderr with `2>$null` captures nothing.
+
+```powershell
+$whisper = "C:\whisper\Release\whisper-cli.exe"
+$model   = "C:\whisper\models\ggml-medium.en.bin"
+$dir     = "C:\path\to\your\folder"
+$ffmpeg  = "ffmpeg"
+$tmp     = "$env:TEMP\whisper_convert.wav"
+
+Get-ChildItem "$dir\*.mp4" | ForEach-Object {
+    $out = ($_.FullName -replace '\.mp4$', '') + ".txt"
+    if (Test-Path $out) {
+        Write-Host "SKIP (exists): $($_.Name)"
+        return
+    }
+    Write-Host "Converting:    $($_.Name)"
+    & $ffmpeg -y -i $_.FullName -ar 16000 -ac 1 -c:a pcm_s16le $tmp 2>$null
+    Write-Host "Transcribing:  $($_.Name)"
+    $wArgs = "-m `"$model`" -f `"$tmp`" --threads 8 --condition-on-previous-text 0 --no-speech-thold 0.6"
+    Start-Process -FilePath $whisper -ArgumentList $wArgs -RedirectStandardOutput $out -Wait -NoNewWindow
+    Write-Host "Done:          $($_.BaseName).txt"
+}
+
+Remove-Item $tmp -ErrorAction SilentlyContinue
+Write-Host "All done."
 ```
-for %f in (C:\path\to\folder\*.mp4) do (
-  C:\whisper\Release\whisper-cli.exe -m C:\whisper\models\ggml-medium.en.bin -f "%f" --no-timestamps -otxt
-)
-```
+
+Change `*.mp4` to `*.mkv`, `*.m4a` etc. to match your file types. The `Test-Path` skip check means re-running the script after an interruption will not re-process already-completed files.
 
 This writes `.txt` files next to each source. The MCP tools will recognize these as already-transcribed when you run `analyze_media` or `start_batch` afterward.
 

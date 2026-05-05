@@ -75,17 +75,13 @@ Copy the binaries from `build\bin\Release\` to `C:\whisper\Release\`.
 | `ggml-base.en.bin` | 142 MB | Fast | Good | Everyday English |
 | `ggml-small.en.bin` | 466 MB | Moderate | Better | Important recordings |
 | `ggml-medium.en.bin` | 1.5 GB | Fast on GPU | Very good | Best quality English |
-| `ggml-large-v3.bin` | 2.9 GB | Fast on GPU | Excellent | Multilingual, best accuracy |
+| `ggml-large-v3-turbo.bin` | 1.6 GB | Fast on GPU | Excellent | **Recommended for English GPU batch work — ~6x faster than large-v3 with minimal accuracy loss** |
+| `ggml-large-v3.bin` | 2.9 GB | Fast on GPU | Excellent | Multilingual, maximum accuracy |
+| `ggml-medium.en-q5_0.bin` | 514 MB | Fast | Very good | **Best CPU-only English option — high accuracy at low memory** |
+| `ggml-large-v3-turbo-q5_0.bin` | 547 MB | Fast | Excellent | **Best CPU-only multilingual option** |
+| `ggml-large-v3-q5_0.bin` | 1.1 GB | Moderate on CPU | Excellent | Multilingual, CPU-friendly |
 
-For **English-only** use: `base.en` or `medium.en` are the best starting points.
-For **multilingual** use (auto-detect, foreign language, translation): `large-v3` is **required**. English-only models (`*.en.bin`) output `[FOREIGN]` on non-English audio and cannot be used for other languages.
-
-Download from Hugging Face:
-```
-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin
-```
-
-Save to `C:\whisper\models\`.
+Use `download_model` in Claude Desktop to install any of these directly. For **English-only** use: `large-v3-turbo` (GPU) or `medium.en-q5_0` (CPU) are the best starting points. For **multilingual** use: `large-v3-turbo` or `large-v3-turbo-q5_0` (CPU). English-only models (`*.en.bin`) output `[FOREIGN]` on non-English audio and cannot be used for other languages.
 
 ---
 
@@ -171,6 +167,19 @@ Transcribe a single file. Supports blocking (default) or background mode for lon
 | `save_to_file` | Save transcript as .txt next to the source file |
 | `background` | Run as detached job — returns a job ID immediately. Use `check_progress` to monitor. Recommended for files over 10 minutes. |
 | `threads` | CPU thread override |
+| `temperature` | Sampling temperature 0.0–1.0. Default 0.0 (deterministic). Higher values reduce hallucination on noisy audio. |
+| `prompt` | Prior context string — improves accuracy for domain-specific vocabulary or speaker names. Example: `"Names: Keemstar, DramaAlert."` |
+| `condition_on_prev_text` | Re-enable context conditioning between segments. Default false. |
+| `beam_size` | Beam search width. Higher = more accurate, slower. Default 5. |
+| `best_of` | Candidate sequences evaluated. Default 5. |
+| `gpu_device` | GPU device index for multi-GPU systems. Default 0. |
+| `processors` | Parallel processor count. Default 1. |
+| `word_timestamps` | One word per timestamped segment. Useful for clip alignment. |
+| `max_segment_length` | Max segment length in characters. |
+| `diarize` | Stereo speaker diarization — requires stereo audio with speakers on separate channels. |
+| `vad_model` | Path to Silero VAD model .bin. Strips silence before transcription — reduces hallucinations on noisy files. |
+| `offset_t` | Start offset in milliseconds. |
+| `duration` | Process duration in milliseconds from offset. |
 
 ---
 
@@ -250,6 +259,29 @@ Verify whisper-cli.exe, the model file, and FFmpeg are all accessible. Run this 
 
 ---
 
+### `list_models`
+List all Whisper model files installed in your models directory. Shows filename, size, whether it is currently active, quantization status, and recommended use case. No network calls — reads local filesystem only.
+
+---
+
+### `download_model`
+Download a Whisper model directly from Hugging Face into your models directory. Accepts a model name (e.g. `large-v3-turbo`, `medium.en-q5_0`) and handles the download automatically. Only downloads from trusted Hugging Face namespaces. After downloading, use `switch_model` to activate it.
+
+| Parameter | Description |
+|---|---|
+| `model_name` | Model name to download, e.g. `large-v3-turbo`, `large-v3-turbo-q5_0`, `medium.en-q5_0` |
+
+---
+
+### `switch_model`
+Switch the active Whisper model for the current session without restarting Claude Desktop. Change is session-scoped — does not persist after restart. To make permanent, update `WHISPER_MODEL` in your config.
+
+| Parameter | Description |
+|---|---|
+| `model_name` | Model filename (e.g. `ggml-large-v3-turbo.bin`) or full path. Must be a `.bin` file in the configured models directory. |
+
+---
+
 ### `check_system`
 Detect GPU hardware and verify Vulkan acceleration is available. Reports GPU name, VRAM, whether `ggml-vulkan.dll` is present, and recommends the best model size for your hardware.
 
@@ -322,6 +354,24 @@ Quick checklist:
 - FFmpeg is installed and in PATH (`ffmpeg -version` works)
 - Claude Desktop was fully restarted after editing config
 - Whisper shows **running** in Settings → Developer
+
+---
+
+## Security
+
+whisper-windows-mcp is designed with security as a core principle.
+
+**All processing is local.** No audio, transcripts, or file paths ever leave your machine. No telemetry. No cloud APIs required for core functionality.
+
+**Input validation.** All file paths are validated before use — UNC paths (`\\server\share`) and directory traversal sequences (`..`) are rejected. Files over 10 GB are rejected to prevent resource exhaustion.
+
+**Transcript injection awareness.** Audio files can contain spoken content that, when transcribed, resembles instructions. Claude's built-in defenses handle this, but it is worth knowing that transcript content is treated as data — never as instructions — by the MCP server itself.
+
+**Model downloads are restricted.** The `download_model` tool only downloads from two trusted Hugging Face namespaces (`ggerganov/whisper.cpp` and `ggml-org`). Arbitrary URLs are rejected. Redirects are validated against an allowlist before following.
+
+**Model switching is sandboxed.** `switch_model` only accepts `.bin` files within the configured models directory. Paths outside that directory are rejected.
+
+**No new network dependencies.** Model downloads use Node.js built-in `https` — no external HTTP libraries are added to the package.
 
 ---
 

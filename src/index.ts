@@ -28,7 +28,8 @@ const execFileAsync = promisify(execFile);
 // ---------------------------------------------------------------------------
 const WHISPER_CLI_PATH =
   process.env.WHISPER_CLI_PATH ?? "C:\\whisper\\Release\\whisper-cli.exe";
-const WHISPER_MODEL =
+// Mutable — switch_model updates this at runtime without restarting Claude Desktop.
+let WHISPER_MODEL =
   process.env.WHISPER_MODEL ?? "C:\\whisper\\models\\ggml-base.en.bin";
 const FFMPEG_PATH =
   process.env.FFMPEG_PATH ?? "ffmpeg";
@@ -44,6 +45,12 @@ const SUPPORTED_EXTENSIONS = [
 ];
 const NATIVE_EXTENSIONS = [".mp3", ".wav"];
 
+// Security: reject files over this size to prevent runaway resource consumption.
+const MAX_FILE_SIZE_MB = 10240; // 10 GB
+
+// Security: patterns rejected in all file_path inputs.
+const UNSAFE_PATH_RE = /(\.\.[/\\])|(^\\\\)/; // blocks .. traversal and UNC paths
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -52,6 +59,26 @@ function validatePaths(): string | null {
     return `whisper-cli.exe not found at: ${WHISPER_CLI_PATH}\nCheck WHISPER_CLI_PATH in claude_desktop_config.json`;
   if (!existsSync(WHISPER_MODEL))
     return `Whisper model not found at: ${WHISPER_MODEL}\nCheck WHISPER_MODEL in claude_desktop_config.json`;
+  return null;
+}
+
+/**
+ * Validate a user-supplied file path for security.
+ * Rejects UNC paths (\\server\share), directory traversal (..),
+ * and files exceeding the size guard.
+ */
+function validateInputPath(filePath: string): string | null {
+  if (UNSAFE_PATH_RE.test(filePath)) {
+    return `Invalid path: "${filePath}"\nPaths containing ".." or UNC paths (\\\\server\\share) are not allowed.`;
+  }
+  if (existsSync(filePath)) {
+    try {
+      const sizeMb = statSync(filePath).size / (1024 * 1024);
+      if (sizeMb > MAX_FILE_SIZE_MB) {
+        return `File too large: ${sizeMb.toFixed(0)} MB exceeds the ${MAX_FILE_SIZE_MB} MB limit.`;
+      }
+    } catch { /* ignore stat errors — existsSync already confirmed it exists */ }
+  }
   return null;
 }
 
@@ -104,7 +131,8 @@ function ensureJobsDir(): void {
 
 async function spawnDetached(
   filePath: string, model: string, language: string, threads: number,
-  outputFormat: "text" | "srt" = "text"
+  outputFormat: "text" | "srt" = "text",
+  extraOpts: Partial<WhisperOptions> = {}
 ): Promise<{ jobId: string; pid: number }> {
   ensureJobsDir();
 
@@ -127,21 +155,48 @@ async function spawnDetached(
   // Determine final destination path
   const sourceBase = filePath.replace(/\.[^.]+$/, "");
   const ext = outputFormat === "srt" ? ".srt" : ".txt";
-  // For SRT with language code (non-English), append language code
   const outputPath = outputFormat === "srt" && language !== "en" && language !== "auto"
     ? `${sourceBase}.${language}.srt`
     : `${sourceBase}${ext}`;
 
-  // Build args
+  // Build args using shared options — ensures quality flags are always applied
+  // in background mode, matching blocking mode behaviour.
   const lang = language === "auto" ? "auto" : language;
   const args = [
     "-m", model,
     "-f", transcribeFrom,
     "-l", lang,
     "-t", String(threads),
-    outputFormat === "srt" ? "-osrt" : "-otxt",
-    "-of", tmpOutputBase,
+    // Hallucination prevention — must be in background mode too.
+    // --max-context 0 prevents conditioning on prior segment output.
+    ...(extraOpts.conditionOnPrevText ? [] : ["--max-context", "0"]),
+    // Confirmed valid flag (-nth). Suppresses silent segments from hallucinating.
+    "--no-speech-thold", String(extraOpts.noSpeechThold ?? 0.6),
   ];
+
+  if (extraOpts.temperature !== undefined) args.push("--temperature", String(extraOpts.temperature));
+  if (extraOpts.prompt) args.push("--prompt", extraOpts.prompt);
+  if (extraOpts.beamSize !== undefined) args.push("--beam-size", String(extraOpts.beamSize));
+  if (extraOpts.bestOf !== undefined) args.push("--best-of", String(extraOpts.bestOf));
+  if (extraOpts.gpuDevice !== undefined) args.push("-g", String(extraOpts.gpuDevice));
+  if (extraOpts.processors !== undefined && extraOpts.processors > 1) args.push("-p", String(extraOpts.processors));
+  if (extraOpts.offsetT !== undefined) args.push("--offset-t", String(extraOpts.offsetT));
+  if (extraOpts.duration !== undefined) args.push("--duration", String(extraOpts.duration));
+  if (extraOpts.diarize) args.push("--diarize");
+  if (extraOpts.vadModel && existsSync(extraOpts.vadModel)) args.push("--vad", "--vad-model", extraOpts.vadModel);
+  if (extraOpts.wordTimestamps) {
+    args.push("--max-len", "1", "--split-on-word");
+  } else {
+    if (extraOpts.maxLen !== undefined) args.push("--max-len", String(extraOpts.maxLen));
+    if (extraOpts.splitOnWord) args.push("--split-on-word");
+  }
+
+  // Output format
+  if (outputFormat === "srt") {
+    args.push("-osrt", "-of", tmpOutputBase);
+  } else {
+    args.push("-otxt", "-of", tmpOutputBase);
+  }
 
   // Spawn detached, redirect stdout+stderr to log file
   const logFd = openSync(logPath, "w");
@@ -353,9 +408,27 @@ async function readBatchProgress(batchId: string): Promise<string> {
       const outputExists = existsSync(job.outputPath);
 
       if (!isRunning) {
+        // Move temp output to final destination if needed.
+        // spawnDetached writes to a sanitized JOBS_DIR temp path to avoid Unicode
+        // filename issues. readJobProgress normally handles this move, but
+        // readBatchProgress must do it too since it never calls readJobProgress.
+        const ext = job.outputFormat === "srt" ? ".srt" : ".txt";
+        const tmpOutput = `${job.tmpOutputBase}${ext}`;
+        if (existsSync(tmpOutput) && tmpOutput !== job.outputPath) {
+          try {
+            writeFileSync(job.outputPath, readFileSync(tmpOutput, "utf8"), "utf8");
+            unlinkSync(tmpOutput);
+          } catch { /* ignore — validateTranscript will catch missing output */ }
+        }
+        // Clean up temp WAV if present
+        if (job.isTmp && existsSync(job.transcribeFrom)) {
+          try { unlinkSync(job.transcribeFrom); } catch { }
+        }
+
         // Job finished — validate and advance
+        const finalOutputExists = existsSync(job.outputPath);
         const validation = validateTranscript(job.outputPath, running.durationSec);
-        if (outputExists && validation.valid) {
+        if (finalOutputExists && validation.valid) {
           running.status = "complete";
         } else {
           running.status = "failed";
@@ -464,11 +537,52 @@ function formatVram(bytes: number): string {
 
 function recommendedModel(vramBytes: number): string {
   const gb = vramBytes / (1024 * 1024 * 1024);
-  if (gb >= 6) return "large-v3 (ggml-large-v3.bin) — fits comfortably in your VRAM";
+  if (gb >= 6) return "large-v3-turbo (ggml-large-v3-turbo.bin) — ~6x faster than large-v3, minimal accuracy loss for English";
   if (gb >= 4) return "medium.en (ggml-medium.en.bin) — good fit for your VRAM";
   if (gb >= 2) return "small.en (ggml-small.en.bin) — safe choice for your VRAM";
   return "base.en (ggml-base.en.bin) — recommended for limited VRAM";
 }
+
+// ---------------------------------------------------------------------------
+// Model registry
+// ---------------------------------------------------------------------------
+interface ModelEntry {
+  name: string;
+  filename: string;
+  sizeMb: number;
+  multilingual: boolean;
+  quantized: boolean;
+  useCase: string;
+  url: string;
+}
+
+const MODEL_REGISTRY: ModelEntry[] = [
+  // Full-precision English
+  { name: "tiny.en",              filename: "ggml-tiny.en.bin",              sizeMb: 75,   multilingual: false, quantized: false, useCase: "Quick tests, lowest accuracy",                       url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" },
+  { name: "base.en",              filename: "ggml-base.en.bin",              sizeMb: 142,  multilingual: false, quantized: false, useCase: "Fast English, good accuracy",                         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" },
+  { name: "small.en",             filename: "ggml-small.en.bin",             sizeMb: 466,  multilingual: false, quantized: false, useCase: "Better English accuracy",                             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin" },
+  { name: "medium.en",            filename: "ggml-medium.en.bin",            sizeMb: 1500, multilingual: false, quantized: false, useCase: "High accuracy English, fast on GPU",                  url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin" },
+  // Full-precision multilingual
+  { name: "tiny",                 filename: "ggml-tiny.bin",                 sizeMb: 75,   multilingual: true,  quantized: false, useCase: "Multilingual, minimal accuracy",                      url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin" },
+  { name: "base",                 filename: "ggml-base.bin",                 sizeMb: 142,  multilingual: true,  quantized: false, useCase: "Multilingual, fast",                                  url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" },
+  { name: "small",                filename: "ggml-small.bin",                sizeMb: 466,  multilingual: true,  quantized: false, useCase: "Multilingual, better accuracy",                       url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" },
+  { name: "medium",               filename: "ggml-medium.bin",               sizeMb: 1500, multilingual: true,  quantized: false, useCase: "Multilingual, high accuracy",                         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin" },
+  { name: "large-v3",             filename: "ggml-large-v3.bin",             sizeMb: 2900, multilingual: true,  quantized: false, useCase: "Best accuracy, multilingual — requires 6GB+ VRAM",   url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin" },
+  { name: "large-v3-turbo",       filename: "ggml-large-v3-turbo.bin",       sizeMb: 1600, multilingual: true,  quantized: false, useCase: "~6x faster than large-v3, minimal accuracy loss — RECOMMENDED for English GPU batch work", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" },
+  // Quantized variants — smaller, CPU-friendly
+  { name: "base.en-q5_1",         filename: "ggml-base.en-q5_1.bin",         sizeMb: 57,   multilingual: false, quantized: true,  useCase: "Tiny English model, CPU-friendly",                   url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin" },
+  { name: "small.en-q5_1",        filename: "ggml-small.en-q5_1.bin",        sizeMb: 181,  multilingual: false, quantized: true,  useCase: "Fast English, low memory, good for CPU",              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin" },
+  { name: "medium.en-q5_0",       filename: "ggml-medium.en-q5_0.bin",       sizeMb: 514,  multilingual: false, quantized: true,  useCase: "High accuracy English, CPU-friendly — good default for no-GPU systems", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin" },
+  { name: "large-v3-q5_0",        filename: "ggml-large-v3-q5_0.bin",        sizeMb: 1080, multilingual: true,  quantized: true,  useCase: "Best multilingual quality at half the size",           url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin" },
+  { name: "large-v3-turbo-q5_0",  filename: "ggml-large-v3-turbo-q5_0.bin",  sizeMb: 547,  multilingual: true,  quantized: true,  useCase: "RECOMMENDED for CPU-only multilingual — fast, low memory, good accuracy", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin" },
+  { name: "large-v3-turbo-q8_0",  filename: "ggml-large-v3-turbo-q8_0.bin",  sizeMb: 874,  multilingual: true,  quantized: true,  useCase: "Turbo quality closer to full precision, moderate size", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin" },
+];
+
+// Security: only allow downloads from these Hugging Face namespaces.
+const ALLOWED_HF_PREFIXES = [
+  "https://huggingface.co/ggerganov/whisper.cpp/",
+  "https://huggingface.co/ggml-org/",
+];
 
 function hasVulkanDll(): boolean {
   const whisperDir = dirname(WHISPER_CLI_PATH);
@@ -563,20 +677,81 @@ async function convertToWav(inputPath: string): Promise<string> {
 
 type OutputFormat = "text" | "timestamps" | "json" | "srt";
 
-function buildArgs(
-  filePath: string, model: string, language: string,
-  outputFormat: OutputFormat, threads: number, translate = false
-): string[] {
-  const lang = language === "auto" ? "auto" : language;
-  const args = ["-m", model, "-f", filePath, "-l", lang, "-t", String(threads)];
-  if (translate) args.push("--translate");
-  if (outputFormat === "srt") {
+// ---------------------------------------------------------------------------
+// Whisper CLI options
+// ---------------------------------------------------------------------------
+interface WhisperOptions {
+  language: string;
+  outputFormat: OutputFormat;
+  threads: number;
+  translate?: boolean;
+  temperature?: number;          // 0.0–1.0, default 0.0 (deterministic)
+  prompt?: string;               // prior context string injected before transcription
+  conditionOnPrevText?: boolean; // default false — hardcoded off for hallucination prevention
+  noSpeechThold?: number;        // default 0.6
+  beamSize?: number;             // beam search width, default 5
+  bestOf?: number;               // candidate sequences evaluated, default 5
+  gpuDevice?: number;            // GPU index for multi-GPU systems
+  processors?: number;           // parallel processor count
+  maxLen?: number;               // max segment length in characters
+  splitOnWord?: boolean;         // split at word boundaries
+  wordTimestamps?: boolean;      // shorthand: sets maxLen=1 + splitOnWord=true
+  diarize?: boolean;             // stereo speaker diarization (requires stereo audio)
+  vadModel?: string;             // path to Silero VAD model .bin for voice activity detection
+  offsetT?: number;              // start offset in milliseconds
+  duration?: number;             // process duration in milliseconds
+}
+
+function buildArgs(filePath: string, model: string, opts: WhisperOptions): string[] {
+  const lang = opts.language === "auto" ? "auto" : opts.language;
+  const args = ["-m", model, "-f", filePath, "-l", lang, "-t", String(opts.threads)];
+
+  // Hallucination prevention — set max context tokens to 0 to prevent whisper
+  // from conditioning each segment on its own prior output, which causes
+  // repetitive hallucination loops on noisy or silent audio.
+  // Flag: --max-context 0 (user can re-enable by setting conditionOnPrevText=true)
+  if (!opts.conditionOnPrevText) args.push("--max-context", "0");
+
+  // Treat segments below this confidence threshold as silence rather than
+  // hallucinating content. Confirmed valid flag in whisper-cli (-nth).
+  args.push("--no-speech-thold", String(opts.noSpeechThold ?? 0.6));
+
+  if (opts.translate) args.push("--translate");
+
+  if (opts.temperature !== undefined) args.push("--temperature", String(opts.temperature));
+  if (opts.prompt) args.push("--prompt", opts.prompt);
+  if (opts.beamSize !== undefined) args.push("--beam-size", String(opts.beamSize));
+  if (opts.bestOf !== undefined) args.push("--best-of", String(opts.bestOf));
+  if (opts.gpuDevice !== undefined) args.push("-g", String(opts.gpuDevice));
+  if (opts.processors !== undefined && opts.processors > 1) args.push("-p", String(opts.processors));
+  if (opts.offsetT !== undefined) args.push("--offset-t", String(opts.offsetT));
+  if (opts.duration !== undefined) args.push("--duration", String(opts.duration));
+  if (opts.diarize) args.push("--diarize");
+
+  // word_timestamps: sets max-len=1 + split-on-word for per-word output
+  // without requiring JSON parsing — simpler than -oj approach.
+  if (opts.wordTimestamps) {
+    args.push("--max-len", "1", "--split-on-word");
+  } else {
+    if (opts.maxLen !== undefined) args.push("--max-len", String(opts.maxLen));
+    if (opts.splitOnWord) args.push("--split-on-word");
+  }
+
+  // VAD: voice activity detection — strips silence before whisper sees the audio
+  if (opts.vadModel && existsSync(opts.vadModel)) {
+    args.push("--vad", "--vad-model", opts.vadModel);
+  }
+
+  // Output format
+  if (opts.outputFormat === "srt") {
     args.push("-osrt", "-of", filePath.replace(/\.[^.]+$/, ""));
-  } else if (outputFormat === "json") {
+  } else if (opts.outputFormat === "json") {
     args.push("-oj");
-  } else if (outputFormat === "text") {
+  } else if (opts.outputFormat === "text") {
     args.push("--no-timestamps");
   }
+  // "timestamps" format: no flag — whisper default stdout includes timestamps
+
   return args;
 }
 
@@ -609,9 +784,14 @@ async function detectLanguage(wavPath: string, model: string, threads: number): 
  */
 async function runSrtPass(
   transcribeFrom: string, destSrt: string,
-  model: string, language: string, threads: number, translate = false
+  model: string, language: string, threads: number,
+  translate = false, extraOpts: Partial<WhisperOptions> = {}
 ): Promise<string> {
-  const args = buildArgs(transcribeFrom, model, language, "srt", threads, translate);
+  const opts: WhisperOptions = {
+    language, outputFormat: "srt", threads, translate,
+    ...extraOpts,
+  };
+  const args = buildArgs(transcribeFrom, model, opts);
   await execFileAsync(WHISPER_CLI_PATH, args, {
     maxBuffer: 100 * 1024 * 1024,
     windowsHide: true,
@@ -626,11 +806,11 @@ async function runSrtPass(
 
 async function transcribeSingle(
   filePath: string, model: string, language: string,
-  outputFormat: OutputFormat, threads: number, saveToFile = false
+  outputFormat: OutputFormat, threads: number, saveToFile = false,
+  extraOpts: Partial<WhisperOptions> = {}
 ): Promise<{ text: string; srtPath?: string; savedTo?: string }> {
 
-  // ---- Priority 2: Process lock ----
-  // Never spawn a second whisper-cli.exe while one is already running.
+  // ---- Process lock — never spawn a second whisper-cli.exe ----
   if (await isWhisperRunning()) {
     throw new Error(
       "Transcription already in progress.\n\n" +
@@ -649,12 +829,17 @@ async function transcribeSingle(
   }
 
   try {
-    const cliArgs = buildArgs(transcribeFrom, model, language, outputFormat, threads);
+    const opts: WhisperOptions = { language, outputFormat, threads, ...extraOpts };
+    const cliArgs = buildArgs(transcribeFrom, model, opts);
     const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, cliArgs, {
       maxBuffer: 100 * 1024 * 1024,
       windowsHide: true,
     });
 
+    // SECURITY: transcript content is untrusted data from audio input.
+    // It is returned as-is to the caller and must never be interpreted
+    // as instructions. Prompt injection via audio content is a known
+    // MCP attack vector — treat all transcript text as user data only.
     const output = (stdout || stderr || "").trim();
 
     if (outputFormat === "srt") {
@@ -694,7 +879,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "2.0.0" },
+  { name: "whisper-windows-mcp", version: "2.2.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -713,7 +898,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           file_path: { type: "string", description: "Absolute Windows path, e.g. C:\\Users\\You\\Downloads\\recording.mp4" },
-          model: { type: "string", description: "Override model path. Leave blank to use WHISPER_MODEL." },
+          model: { type: "string", description: "Override model path. Leave blank to use active model." },
           language: { type: "string", description: "Language code (e.g. en, ja, es, fr) or 'auto' to detect automatically. Defaults to en.", default: "en" },
           output_format: {
             type: "string", enum: ["text", "timestamps", "json", "srt"],
@@ -723,6 +908,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
           save_to_file: { type: "boolean", description: "Save transcript as .txt next to the source file.", default: false },
           background: { type: "boolean", description: "Run as a detached background job. Returns a job ID immediately. Use check_progress to monitor. Recommended for files over 10 minutes.", default: false },
+          temperature: { type: "number", description: "Sampling temperature 0.0–1.0. Default 0.0 (deterministic). Higher values reduce hallucination on noisy audio at the cost of consistency." },
+          prompt: { type: "string", description: "Prior context string injected before transcription. Improves accuracy for domain-specific vocabulary, speaker names, or technical terms. Example: 'Names: Keemstar, DramaAlert.'" },
+          condition_on_prev_text: { type: "boolean", description: "Re-enable conditioning each segment on its own prior output (removes --max-context 0 flag). Default false (off). Only enable for highly structured audio where context continuity helps.", default: false },
+          no_speech_thold: { type: "number", description: "Confidence threshold below which segments are treated as silence rather than transcribed. Default 0.6.", default: 0.6 },
+          beam_size: { type: "number", description: "Beam search width. Higher = more accurate but slower. Default 5." },
+          best_of: { type: "number", description: "Number of candidate sequences to evaluate. Default 5." },
+          gpu_device: { type: "number", description: "GPU device index for multi-GPU systems. Use check_system to see available GPUs. Default 0." },
+          processors: { type: "number", description: "Number of parallel processors for chunk processing. Default 1." },
+          word_timestamps: { type: "boolean", description: "Output one word per timestamped segment (sets --max-len 1 --split-on-word). Useful for clip alignment and precise timecode search.", default: false },
+          max_segment_length: { type: "number", description: "Maximum segment length in characters. Controls line break frequency in output. Ignored when word_timestamps=true." },
+          split_on_word: { type: "boolean", description: "Split segments at word boundaries rather than mid-word. Defaults to false.", default: false },
+          diarize: { type: "boolean", description: "Stereo speaker diarization — labels left/right channel speakers in transcript. Requires stereo audio with speakers on separate channels.", default: false },
+          vad_model: { type: "string", description: "Absolute path to a Silero VAD model .bin file. When provided, voice activity detection strips silence before transcription — reduces hallucinations and speeds up processing. Download via download_model." },
+          offset_t: { type: "number", description: "Start transcription at this offset in milliseconds. Use to process a specific section of a file." },
+          duration: { type: "number", description: "Process only this many milliseconds of audio starting from offset_t (or the beginning). Use with offset_t to target a specific time window." },
         },
         required: ["file_path"],
       },
@@ -796,6 +996,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             default: false,
           },
           threads: { type: "number", description: `CPU threads. Defaults to ${WHISPER_THREADS} of ${SYSTEM_THREADS}.` },
+          temperature: { type: "number", description: "Sampling temperature 0.0–1.0. Default 0.0." },
+          prompt: { type: "string", description: "Prior context string for domain-specific vocabulary or speaker names." },
+          beam_size: { type: "number", description: "Beam search width. Higher = more accurate, slower. Default 5." },
+          best_of: { type: "number", description: "Candidate sequences evaluated. Default 5." },
+          diarize: { type: "boolean", description: "Stereo speaker diarization. Requires stereo audio with speakers on separate channels.", default: false },
+          vad_model: { type: "string", description: "Path to Silero VAD model .bin. Strips silence before transcription. Download via download_model." },
         },
         required: ["file_path"],
       },
@@ -870,6 +1076,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "and recommends the best Whisper model for your hardware. " +
         "Run this if you want to confirm GPU acceleration is working or diagnose why it isn't.",
       inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "list_models",
+      description:
+        "List all Whisper model files installed in your models directory. " +
+        "Shows filename, size, whether it is currently active, quantization status, " +
+        "and recommended use case for each model. " +
+        "No network calls — reads local filesystem only.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "download_model",
+      description:
+        "Download a Whisper model from Hugging Face directly into your models directory. " +
+        "Accepts a model name (e.g. large-v3-turbo, medium.en-q5_0) and handles the download automatically. " +
+        "Downloads only from trusted Hugging Face namespaces (ggerganov/whisper.cpp and ggml-org). " +
+        "After downloading, use switch_model to activate it for the current session.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          model_name: {
+            type: "string",
+            description: "Model name to download, e.g. 'large-v3-turbo', 'medium.en-q5_0', 'large-v3-turbo-q5_0'. Use list_models to see what is already installed.",
+          },
+        },
+        required: ["model_name"],
+      },
+    },
+    {
+      name: "switch_model",
+      description:
+        "Switch the active Whisper model for the current session without restarting Claude Desktop. " +
+        "Accepts a model filename (e.g. ggml-large-v3-turbo.bin) or full path. " +
+        "The model must already be installed in your models directory. " +
+        "Use list_models to see installed models, download_model to add new ones. " +
+        "Change is session-scoped — does not persist after Claude Desktop restarts.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          model_name: {
+            type: "string",
+            description: "Model filename (e.g. ggml-large-v3-turbo.bin) or full path. Must be a .bin file in the configured models directory.",
+          },
+        },
+        required: ["model_name"],
+      },
     },
   ],
 }));
@@ -1045,6 +1297,258 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   // -------------------------------------------------------------------------
+  // list_models
+  // -------------------------------------------------------------------------
+  if (name === "list_models") {
+    const modelsDir = dirname(WHISPER_MODEL);
+    if (!existsSync(modelsDir)) {
+      return { content: [{ type: "text", text: `Models directory not found: ${modelsDir}` }], isError: true };
+    }
+
+    let files: string[];
+    try {
+      files = readdirSync(modelsDir).filter(f => f.endsWith(".bin"));
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Could not read models directory: ${err?.message}` }], isError: true };
+    }
+
+    if (files.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text:
+            `No .bin model files found in: ${modelsDir}\n\n` +
+            `Use download_model to install a model.\n` +
+            `Recommended starting point: large-v3-turbo (English GPU) or large-v3-turbo-q5_0 (CPU/multilingual)`,
+        }],
+      };
+    }
+
+    const activeFile = basename(WHISPER_MODEL);
+    const rows = files.map(f => {
+      const fullPath = join(modelsDir, f);
+      const sizeMb = (() => { try { return (statSync(fullPath).size / (1024 * 1024)).toFixed(0) + " MB"; } catch { return "?"; } })();
+      const isActive = f === activeFile ? " ◀ ACTIVE" : "";
+      const known = MODEL_REGISTRY.find(m => m.filename === f);
+      const quantTag = known?.quantized ? " [quantized]" : "";
+      const useCase = known ? known.useCase : "Unknown model";
+      return `${isActive ? "●" : "○"} ${f}${isActive}${quantTag}\n  Size: ${sizeMb}  |  ${useCase}`;
+    });
+
+    // Also list downloadable models not yet installed
+    const installedFilenames = new Set(files);
+    const available = MODEL_REGISTRY
+      .filter(m => !installedFilenames.has(m.filename))
+      .map(m => `  ${m.name} (${m.filename}, ~${m.sizeMb} MB) — ${m.useCase}`)
+      .join("\n");
+
+    return {
+      content: [{
+        type: "text",
+        text:
+          `Installed models in: ${modelsDir}\n${"─".repeat(60)}\n\n` +
+          rows.join("\n\n") +
+          (available
+            ? `\n\n${"─".repeat(60)}\nAvailable to download:\n${available}\n\nUse download_model <name> to install.`
+            : `\n\n${"─".repeat(60)}\nAll known models are installed.`),
+      }],
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // download_model
+  // -------------------------------------------------------------------------
+  if (name === "download_model") {
+    const modelName = (args?.model_name as string)?.trim();
+    if (!modelName) return { content: [{ type: "text", text: "model_name is required." }], isError: true };
+
+    const entry = MODEL_REGISTRY.find(
+      m => m.name === modelName || m.filename === modelName
+    );
+    if (!entry) {
+      const names = MODEL_REGISTRY.map(m => m.name).join(", ");
+      return {
+        content: [{
+          type: "text",
+          text:
+            `Unknown model: "${modelName}"\n\n` +
+            `Available models:\n${names}\n\n` +
+            `Use list_models to see what is already installed.`,
+        }],
+        isError: true,
+      };
+    }
+
+    // Security: enforce URL whitelist — never download from arbitrary URLs
+    const urlOk = ALLOWED_HF_PREFIXES.some(prefix => entry.url.startsWith(prefix));
+    if (!urlOk) {
+      return {
+        content: [{ type: "text", text: `Security error: download URL for "${modelName}" is not in the allowed list.` }],
+        isError: true,
+      };
+    }
+
+    const modelsDir = dirname(WHISPER_MODEL);
+    if (!existsSync(modelsDir)) {
+      try { mkdirSync(modelsDir, { recursive: true }); } catch (err: any) {
+        return { content: [{ type: "text", text: `Could not create models directory: ${err?.message}` }], isError: true };
+      }
+    }
+
+    const destPath = join(modelsDir, entry.filename);
+    if (existsSync(destPath)) {
+      const sizeMb = (statSync(destPath).size / (1024 * 1024)).toFixed(0);
+      return {
+        content: [{
+          type: "text",
+          text:
+            `✅ ${entry.filename} is already installed (${sizeMb} MB).\n\n` +
+            `Use switch_model ${entry.filename} to activate it.`,
+        }],
+      };
+    }
+
+    // Download using Node.js built-in https — no external dependencies
+    try {
+      const https = await import("https");
+      const fs = await import("fs");
+
+      await new Promise<void>((resolve, reject) => {
+        const tmpPath = destPath + ".part";
+        const file = fs.createWriteStream(tmpPath);
+
+        function doRequest(url: string) {
+          https.get(url, (res) => {
+            // Follow redirects (Hugging Face uses redirects)
+            if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) && res.headers.location) {
+              const redirectUrl = res.headers.location;
+              // Security: ensure redirect stays within allowed domains
+              const redirectOk = ALLOWED_HF_PREFIXES.some(p => redirectUrl.startsWith(p))
+                || redirectUrl.startsWith("https://cdn-lfs.huggingface.co/")
+                || redirectUrl.startsWith("https://cdn-lfs-us-1.huggingface.co/");
+              if (!redirectOk) { reject(new Error(`Redirect to disallowed URL: ${redirectUrl}`)); return; }
+              doRequest(redirectUrl);
+              return;
+            }
+            if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode} from ${url}`)); return; }
+            res.pipe(file);
+            // Wait for close callback before renaming — Windows requires the file
+            // handle to be fully released before renameSync will succeed.
+            file.on("finish", () => {
+              file.close((closeErr) => {
+                if (closeErr) { reject(closeErr); return; }
+                try {
+                  fs.renameSync(tmpPath, destPath);
+                  resolve();
+                } catch (renameErr) {
+                  reject(renameErr);
+                }
+              });
+            });
+          }).on("error", (err) => {
+            try { fs.unlinkSync(tmpPath); } catch { }
+            reject(err);
+          });
+        }
+
+        doRequest(entry.url);
+      });
+
+      const finalSizeMb = (statSync(destPath).size / (1024 * 1024)).toFixed(0);
+      return {
+        content: [{
+          type: "text",
+          text:
+            `✅ Downloaded: ${entry.filename} (${finalSizeMb} MB)\n` +
+            `Saved to: ${destPath}\n\n` +
+            `Use switch_model ${entry.filename} to activate it for this session.`,
+        }],
+      };
+    } catch (err: any) {
+      return {
+        content: [{ type: "text", text: `Download failed:\n\n${err?.message || String(err)}` }],
+        isError: true,
+      };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // switch_model
+  // -------------------------------------------------------------------------
+  if (name === "switch_model") {
+    const modelInput = (args?.model_name as string)?.trim();
+    if (!modelInput) return { content: [{ type: "text", text: "model_name is required." }], isError: true };
+
+    // Security: must end in .bin
+    if (!modelInput.endsWith(".bin")) {
+      return {
+        content: [{ type: "text", text: `Invalid model: "${modelInput}"\nModel files must end in .bin` }],
+        isError: true,
+      };
+    }
+
+    // Security: reject path traversal
+    if (UNSAFE_PATH_RE.test(modelInput)) {
+      return {
+        content: [{ type: "text", text: `Invalid path: "${modelInput}"\nPaths containing ".." or UNC paths are not allowed.` }],
+        isError: true,
+      };
+    }
+
+    // Resolve to full path — either absolute or relative to models dir
+    const modelsDir = dirname(WHISPER_MODEL);
+    const resolvedPath = modelInput.includes("\\") || modelInput.includes("/")
+      ? modelInput
+      : join(modelsDir, modelInput);
+
+    // Security: must live within the configured models directory
+    if (!resolvedPath.startsWith(modelsDir)) {
+      return {
+        content: [{ type: "text", text: `Security error: model must be within the configured models directory (${modelsDir}).` }],
+        isError: true,
+      };
+    }
+
+    if (!existsSync(resolvedPath)) {
+      return {
+        content: [{
+          type: "text",
+          text:
+            `Model not found: ${resolvedPath}\n\n` +
+            `Use list_models to see installed models, or download_model to install a new one.`,
+        }],
+        isError: true,
+      };
+    }
+
+    // Process lock — don't switch mid-transcription
+    if (await isWhisperRunning()) {
+      return {
+        content: [{ type: "text", text: "Cannot switch model while a transcription is in progress. Wait for the current job to finish first." }],
+        isError: true,
+      };
+    }
+
+    const previousModel = basename(WHISPER_MODEL);
+    WHISPER_MODEL = resolvedPath;
+    const newModel = basename(WHISPER_MODEL);
+    const sizeMb = (statSync(resolvedPath).size / (1024 * 1024)).toFixed(0);
+    const known = MODEL_REGISTRY.find(m => m.filename === newModel);
+
+    return {
+      content: [{
+        type: "text",
+        text:
+          `✅ Model switched!\n\n` +
+          `Previous: ${previousModel}\n` +
+          `Active:   ${newModel} (${sizeMb} MB)\n` +
+          (known ? `Use case: ${known.useCase}\n` : "") +
+          `\nThis change is session-scoped. To make it permanent, update WHISPER_MODEL in claude_desktop_config.json.`,
+      }],
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // transcribe_audio
   // -------------------------------------------------------------------------
   if (name === "transcribe_audio") {
@@ -1056,7 +1560,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const saveToFile = (args?.save_to_file as boolean) || false;
     const background = (args?.background as boolean) || false;
 
+    // v2.2.0 quality and control params
+    const extraOpts: Partial<WhisperOptions> = {};
+    if (args?.temperature !== undefined) extraOpts.temperature = Number(args.temperature);
+    if (args?.prompt) extraOpts.prompt = String(args.prompt);
+    if (args?.condition_on_prev_text !== undefined) extraOpts.conditionOnPrevText = Boolean(args.condition_on_prev_text);
+    if (args?.no_speech_thold !== undefined) extraOpts.noSpeechThold = Number(args.no_speech_thold);
+    if (args?.beam_size !== undefined) extraOpts.beamSize = Number(args.beam_size);
+    if (args?.best_of !== undefined) extraOpts.bestOf = Number(args.best_of);
+    if (args?.gpu_device !== undefined) extraOpts.gpuDevice = Number(args.gpu_device);
+    if (args?.processors !== undefined) extraOpts.processors = Number(args.processors);
+    if (args?.word_timestamps) extraOpts.wordTimestamps = true;
+    if (args?.max_segment_length !== undefined) extraOpts.maxLen = Number(args.max_segment_length);
+    if (args?.split_on_word) extraOpts.splitOnWord = true;
+    if (args?.diarize) extraOpts.diarize = true;
+    if (args?.vad_model) extraOpts.vadModel = String(args.vad_model);
+    if (args?.offset_t !== undefined) extraOpts.offsetT = Number(args.offset_t);
+    if (args?.duration !== undefined) extraOpts.duration = Number(args.duration);
+
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
+    const pathError = validateInputPath(filePath);
+    if (pathError) return { content: [{ type: "text", text: pathError }], isError: true };
     if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
@@ -1070,7 +1594,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       try {
-        const { jobId, pid } = await spawnDetached(filePath, model, language, threads, outputFormat === "srt" ? "srt" : "text");
+        const { jobId, pid } = await spawnDetached(filePath, model, language, threads, outputFormat === "srt" ? "srt" : "text", extraOpts);
         return {
           content: [{
             type: "text",
@@ -1090,7 +1614,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // Blocking mode (default)
     try {
-      const result = await transcribeSingle(filePath, model, language, outputFormat, threads, saveToFile);
+      const result = await transcribeSingle(filePath, model, language, outputFormat, threads, saveToFile, extraOpts);
       let response = result.text;
       if (result.savedTo) response += `\n\n[Transcript saved to: ${result.savedTo}]`;
       if (result.srtPath) response += `\n\n[SRT subtitle file saved to: ${result.srtPath}]`;
@@ -1123,6 +1647,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
 
     if (!folderPath) return { content: [{ type: "text", text: "folder_path is required." }], isError: true };
+    const pathError = validateInputPath(folderPath);
+    if (pathError) return { content: [{ type: "text", text: pathError }], isError: true };
     if (!existsSync(folderPath)) return { content: [{ type: "text", text: `Folder not found: ${folderPath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
@@ -1214,7 +1740,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const background = (args?.background as boolean) || false;
     const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
 
+    // v2.2.0 quality params
+    const extraOpts: Partial<WhisperOptions> = {};
+    if (args?.temperature !== undefined) extraOpts.temperature = Number(args.temperature);
+    if (args?.prompt) extraOpts.prompt = String(args.prompt);
+    if (args?.beam_size !== undefined) extraOpts.beamSize = Number(args.beam_size);
+    if (args?.best_of !== undefined) extraOpts.bestOf = Number(args.best_of);
+    if (args?.diarize) extraOpts.diarize = true;
+    if (args?.vad_model) extraOpts.vadModel = String(args.vad_model);
+
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
+    const pathError = validateInputPath(filePath);
+    if (pathError) return { content: [{ type: "text", text: pathError }], isError: true };
     if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
@@ -1225,7 +1762,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Background mode — detached SRT job
     if (background) {
       try {
-        const { jobId, pid } = await spawnDetached(filePath, WHISPER_MODEL, language, threads, "srt");
+        const { jobId, pid } = await spawnDetached(filePath, WHISPER_MODEL, language, threads, "srt", extraOpts);
         return {
           content: [{
             type: "text",
@@ -1270,13 +1807,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ? `${baseNoExt}.srt`
         : `${baseNoExt}.${detectedLang}.srt`;
 
-      await runSrtPass(transcribeFrom, nativeSrt, WHISPER_MODEL, detectedLang, threads, false);
+      await runSrtPass(transcribeFrom, nativeSrt, WHISPER_MODEL, detectedLang, threads, false, extraOpts);
       results.push(`✅ Native (${detectedLang}): ${nativeSrt}`);
 
       // Pass 2 — English translation SRT (only if language isn't already English)
       if (translateToEnglish && detectedLang !== "en") {
         const englishSrt = `${baseNoExt}.en.srt`;
-        await runSrtPass(transcribeFrom, englishSrt, WHISPER_MODEL, detectedLang, threads, true);
+        await runSrtPass(transcribeFrom, englishSrt, WHISPER_MODEL, detectedLang, threads, true, extraOpts);
         results.push(`✅ English translation: ${englishSrt}`);
       }
 
@@ -1360,7 +1897,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const txtPath = filePath.replace(/\.[^.]+$/, ".txt");
 
     try {
-      const result = await transcribeSingle(filePath, WHISPER_MODEL, language, "text", threads, true);
+      const result = await transcribeSingle(filePath, WHISPER_MODEL, language, "text", threads, true, {});
       const remaining = files.length - fileIndex;
       const nextMsg = remaining > 0
         ? `\n\n${remaining} file(s) remaining. Say "continue" or "transcribe file ${fileIndex + 1}" to proceed, or "stop" to finish.`
@@ -1399,7 +1936,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v2.0.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
+  console.error(`whisper-windows-mcp v2.2.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS}`);
 }
 
 main().catch((err) => {

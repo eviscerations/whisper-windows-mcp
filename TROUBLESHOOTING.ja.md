@@ -31,6 +31,30 @@
 
 ---
 
+## download_modelが大きなモデルでタイムアウトする
+
+Claude DesktopはMCPツール呼び出しに4分のタイムアウトを設定しています。遅い接続では大きなモデルのダウンロードがこれを超える可能性があります。
+
+**ファイルサイズ：**
+- `large-v3` — 2.9 GB
+- `large-v3-turbo` — 1.6 GB
+- `large-v3-q5_0` — 1.1 GB
+- `large-v3-turbo-q5_0` — 547 MB
+- `medium.en` — 1.5 GB
+- `medium.en-q5_0` — 514 MB
+
+高速接続（100 Mbps以上）では、large-v3でも4分以内にダウンロードできます。遅い接続では、ブラウザまたはPowerShellで直接ダウンロードしてモデルディレクトリに配置してください：
+
+```powershell
+# 例 — large-v3-turboを直接ダウンロード
+Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" `
+  -OutFile "C:\whisper\models\ggml-large-v3-turbo.bin"
+```
+
+その後、`switch_model ggml-large-v3-turbo.bin`でアクティベートしてください。
+
+---
+
 ## `check_config`がwhisper-cli.exeを見つけられない
 
 設定のパスが実際のファイルの場所と一致していません。
@@ -175,6 +199,59 @@ Whisperが音声を検出したが文字起こしできていません。最も�
 ## 字幕翻訳が英語にしか対応していない
 
 これは仕様です。Whisperの組み込み`--translate`フラグは**英語へのみ**翻訳します。他の言語への翻訳は、生成された`.srt`ファイルを別途翻訳ツールで処理してください。
+
+---
+
+## 一時ジョブディレクトリのクリーンアップ
+
+whisper-windows-mcpは文字起こし中に`%TEMP%\whisper-mcp-jobs\`にジョブ状態とログファイルを書き込みます。特に長い文字起こしジョブの`.log`ファイルは時間とともに蓄積され、ディスクスペースを消費します。
+
+バッチまたはジョブが完了し、出力トランスクリプトを確認したら、このディレクトリ内のすべてを安全に削除できます：
+
+```powershell
+Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Recurse -Force
+```
+
+ディレクトリは次の文字起こし時に自動的に再作成されます。トランスクリプトの出力ファイルはここに永続的に保存されません — 完了時にソースディレクトリに移動されます。ジョブのメタデータとログのみが残ります。
+
+**注意：** 文字起こしが進行中の間はこのディレクトリを削除しないでください — `check_batch_progress`が機能するためにバッチ状態ファイルが必要です。
+
+---
+
+## コマンドラインからの大規模バッチ処理
+
+Claudeなしで一晩中実行したい大規模バッチには、PowerShellを使用してください。
+
+**重要：** whisper-cli.exeはMP4、MKVなどのほとんどの動画フォーマットを直接読み込めません。FFmpegで事前にWAVに変換する必要があります。またwhisperはトランスクリプトをstdoutに、診断情報をstderrに出力します。`Start-Process -RedirectStandardOutput`を使用してトランスクリプトを正しくキャプチャしてください。`|`でパイプしたり`2>$null`でstderrを抑制しても、何もキャプチャされません。
+
+```powershell
+$whisper = "C:\whisper\Release\whisper-cli.exe"
+$model   = "C:\whisper\models\ggml-medium.en.bin"
+$dir     = "C:\path\to\your\folder"
+$ffmpeg  = "ffmpeg"
+$tmp     = "$env:TEMP\whisper_convert.wav"
+
+Get-ChildItem "$dir\*.mp4" | ForEach-Object {
+    $out = ($_.FullName -replace '\.mp4$', '') + ".txt"
+    if (Test-Path $out) {
+        Write-Host "SKIP (exists): $($_.Name)"
+        return
+    }
+    Write-Host "Converting:    $($_.Name)"
+    & $ffmpeg -y -i $_.FullName -ar 16000 -ac 1 -c:a pcm_s16le $tmp 2>$null
+    Write-Host "Transcribing:  $($_.Name)"
+    $wArgs = "-m `"$model`" -f `"$tmp`" --threads 8 --condition-on-previous-text 0 --no-speech-thold 0.6"
+    Start-Process -FilePath $whisper -ArgumentList $wArgs -RedirectStandardOutput $out -Wait -NoNewWindow
+    Write-Host "Done:          $($_.BaseName).txt"
+}
+
+Remove-Item $tmp -ErrorAction SilentlyContinue
+Write-Host "All done."
+```
+
+`*.mp4`をファイルタイプに合わせて`*.mkv`や`*.m4a`などに変更してください。`Test-Path`のスキップチェックにより、中断後にスクリプトを再実行しても完了済みファイルは再処理されません。
+
+これにより各ソースファイルの隣に`.txt`ファイルが書き込まれます。その後`analyze_media`や`start_batch`を実行すると、MCPツールはこれらを文字起こし済みとして認識します。
 
 ---
 
