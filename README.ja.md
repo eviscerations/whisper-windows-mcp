@@ -367,12 +367,13 @@ whisper-windows-mcpはセキュリティを核心的な原則として設計さ�
 | `WHISPER_MODEL` | モデル.binファイルへのパス（必須） |
 | `WHISPER_THREADS` | CPUスレッド数の上書き |
 | `FFMPEG_PATH` | ffmpegがシステムPATHにない場合のパス |
+| `WHISPER_PRIVACY_MODE` | **計画中。**`true`に設定すると、ツールレスポンスはメタデータのみを返し、トランスクリプトテキストはClaudeのAPIに送信されません。規制対象または機密性の高いコンテンツに使用します。[PRIVACY.md](PRIVACY.md)を参照してください。 |
 
 ---
 
 ## トラブルシューティング
 
-詳細な解決策については[TROUBLESHOOTING.md](TROUBLESHOOTING.md)を参照してください。
+詳細な解決策については[TROUBLESHOOTING.md](TROUBLESHOOTING.md)を参照してください。規制対象コンテンツを扱う場合は[PRIVACY.md](PRIVACY.md)も参照してください。
 
 クイックチェックリスト：
 - 設定のパスに**バックスラッシュを2つ**使用している（`C:\\whisper\\...`）

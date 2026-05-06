@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Roadmap
 
-Current version: **v2.0.0**
+Current version: **v2.2.0**
 
 ---
 
@@ -30,9 +30,9 @@ These principles govern every decision in this project and take precedence over 
 Added `isWhisperRunning()` check using `tasklist /FI` before any transcription spawn. Returns a clear error with Task Manager instructions rather than spawning a competing process.
 
 ### ✅ v1.4.0 — Vulkan GPU Acceleration
-Compiled whisper.cpp from source with `-DGGML_VULKAN=ON` using VS Build Tools 2026 and Vulkan SDK 1.4.341.1. Pre-built Vulkan binaries distributed as `whisper-vulkan-win-x64.zip`.
+Compiled whisper.cpp from source with `-DGGML_VULKAN=ON` using VS Build Tools 2022 and Vulkan SDK. Pre-built Vulkan binaries distributed as `whisper-vulkan-win-x64.zip`.
 
-**Results on AMD Radeon RX Vega 56:** ~16% GPU utilization. A 58-minute file completes in ~4.5 minutes on GPU vs ~88 minutes CPU-only.
+**Results on AMD Radeon RX Vega 56:** ~16% GPU utilization average. A 58-minute file completes in ~4.5 minutes on GPU vs ~88 minutes CPU-only.
 
 ### ✅ v1.5.0 — System Diagnostics
 `check_system` tool: GPU detection via `wmic`, Vulkan DLL verification, VRAM reporting, model size recommendation.
@@ -56,124 +56,133 @@ Detached process architecture: `transcribe_audio` with `background=true` spawns 
 
 **SRT in background mode:** `spawnDetached` previously hardcoded `-otxt` regardless of requested format, and `generate_subtitles` blocked synchronously and hit the 4-minute MCP timeout on longer files. Fixed by adding `outputFormat` parameter to `spawnDetached`, supporting `text` and `srt` output in background mode.
 
+### ✅ v2.0.1 — Bug Fixes (shipped in v2.2.0)
+- `--max-context 0` hardcoded in both `buildArgs` and `spawnDetached` — prevents hallucination loops on long-form audio. `--condition-on-previous-text` and `--no-context` are not valid flags in the current binary (v1.8.3 era) — `--max-context N` is the correct flag.
+- `--no-speech-thold 0.6` hardcoded in both functions — segments below confidence threshold treated as silence rather than hallucinated content.
+- Path validation (`validateInputPath`) — rejects UNC paths and `..` traversal.
+- `MAX_FILE_SIZE_MB = 10240` file size guard.
+- Transcript injection security comment in `transcribeSingle`.
+- Broken CLI batch command fixed in TROUBLESHOOTING.md and TROUBLESHOOTING.ja.md — documented the correct FFmpeg pre-conversion approach and `Start-Process -RedirectStandardOutput` method.
+
+### ✅ v2.1.0 — Model Management Suite (shipped in v2.2.0)
+- `WHISPER_MODEL` changed from `const` to `let` (session-mutable).
+- `MODEL_REGISTRY` — 16 models, full-precision and quantized variants, Hugging Face download URLs.
+- `ALLOWED_HF_PREFIXES` — URL whitelist restricting downloads to `ggerganov/whisper.cpp` and `ggml-org` namespaces.
+- `list_models` tool — scans models directory, shows active model, sizes, use cases, available downloads.
+- `download_model` tool — downloads from Hugging Face via Node.js built-in `https`, atomic rename (callback-before-rename to fix Windows file handle release race).
+- `switch_model` tool — validates `.bin` extension, directory constraint, process lock check.
+- `recommendedModel()` updated to recommend `large-v3-turbo` for 6GB+ VRAM.
+
+### ✅ v2.2.0 — Quality, Parameter, and Hardware Expansion (current)
+- `WhisperOptions` interface replacing positional args in `buildArgs`.
+- New parameters in `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
+- New parameters in `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
+- `spawnDetached` refactored — all quality flags now applied in background/batch mode.
+- `runSrtPass` updated to accept `extraOpts`.
+- Batch output fix — `readBatchProgress` now moves temp output to final destination before validating (was the root cause of all batch "failed" results).
+
+**Flag compatibility note:** `gpu_device` / `-g` was added in whisper.cpp v1.8.4. The pre-built Vulkan binary in releases is v1.8.3-era — this parameter is accepted by the tool but will have no effect until users update to a v1.8.4+ binary.
+
+**Confirmed valid flags in current binary (v1.8.3 era):**
+`--max-context`, `--no-speech-thold`, `--processors`, `--offset-t`, `--duration`, `--best-of`, `--beam-size`, `--diarize`, `--tinydiarize`, `--temperature`, `--prompt`, VAD flags.
+
+**Not in current binary:** `--no-context` (use `--max-context 0`), `--condition-on-previous-text` (Python API name only), `--gpu-device` / `-g` (v1.8.4+).
+
 ---
 
-## Pending — v2.0.1: Bug Fixes
+## Critical Bug — Batch Auto-Advance (Confirmed, Fix Pending)
 
-Confirmed bugs in the v2.0.0 codebase. These are patched before any new features are added.
+### Batch Does Not Advance Without Active Polling
 
-### Hallucination Prevention Missing from buildArgs
-`--condition-on-previous-text` is not passed anywhere in `buildArgs`. Without it, whisper conditions each segment on its own prior output, which causes runaway hallucination loops on low-quality audio, silence, or background noise — producing outputs filled with repeated phrases ("Thank you. Thank you. Thank you.") instead of actual content.
+`start_batch` does not autonomously advance through the queue between files. The batch only progresses when `check_batch_progress` is called. Without polling, the batch stalls indefinitely after each file — whisper-cli.exe exits, no new process spawns, and the queue does not advance.
 
-**Fix:** Hardcode `--condition-on-previous-text 0` as a default in `buildArgs`. This is the single most impactful quality flag for long-form audio and must never be omitted. Also expose `--no-speech-thold` as an optional parameter (default `0.6`) so segments below confidence threshold are treated as silence rather than hallucinated into content.
+This breaks unattended overnight batch processing, which is a core design goal of the tool, and directly violates the design principle of minimizing Claude API calls. A 95-file batch of short clips required approximately 200 polling calls over 100 minutes to complete.
 
-### TROUBLESHOOTING.md CLI Batch Command Broken
-The large unattended batch command documented in TROUBLESHOOTING.md passes MP4 files directly to whisper-cli without FFmpeg pre-conversion. whisper-cli cannot read MP4 as WAV — this produces `error: failed to read audio data as wav` for every file.
+**Root cause:** `readBatchProgress` contains all queue advancement logic. It only executes when `check_batch_progress` is explicitly called. There is no background timer, file watcher, or autonomous loop.
 
-**Fix:** Replace with the correct FFmpeg pre-conversion approach. Document `Start-Process -RedirectStandardOutput` as the correct PowerShell method for capturing whisper output — whisper writes transcript to stdout and diagnostics to stderr, so piping with `|` and suppressing stderr with `2>$null` captures nothing.
+**Planned fix — Option B (exit callback, strongly preferred):** Attach an `on('exit')` handler to the spawned whisper-cli child process. When the process exits, immediately invoke advancement logic to validate output and spawn the next job. Event-driven, fires exactly once per file completion, zero polling overhead, zero API calls consumed.
 
-Applies to both `TROUBLESHOOTING.md` and `TROUBLESHOOTING.ja.md`.
+**Option A (fallback only):** Background `setInterval` with duration-aware polling interval derived from FFprobe duration data already present in the batch state JSON. File size is not a reliable proxy for duration.
 
-### Filename-Based References Throughout
-All tool outputs should reference the full source filename rather than positional indices. Affects batch listings, progress reports, and error messages. Full audit of all tool handlers required.
+**Additional constraint:** The fix must not spawn a second whisper-cli.exe while one is already running — the process lock must be respected in the auto-advance path.
+
+**Workaround (current):** Call `check_batch_progress` repeatedly until the batch completes. Approximately one poll per file required.
 
 ---
 
-## Planned — v2.1.0: Model Management Suite
+## Planned — Privacy Architecture (Before Bun Migration)
 
-The highest-priority feature block. Currently users must manually find, download, and configure model files, and the active model is fixed at startup. This creates significant friction and prevents mid-session flexibility. All three tools ship together as a cohesive set.
+These changes must ship before the Bun migration and before any license changes that facilitate commercial or enterprise adoption. Shipping enterprise-grade tooling without resolved compliance protections creates liability for users in regulated industries.
 
-### `list_models`
-Scan the configured models directory and return a formatted table of all installed Whisper model files. For each model: filename, size on disk, whether it is currently active, quantization level if applicable, and recommended use case. No network calls. Reads local filesystem only. Single tool call, single response.
+### `WHISPER_PRIVACY_MODE` Environment Variable
+The tool currently guarantees that no **audio** leaves the machine. It does not extend this guarantee to **transcript text** — when transcript content is returned inline in a tool response, that text is processed by Claude's API and leaves the local environment.
 
-### `download_model`
-Fetch a model file directly from Hugging Face into the configured models directory. Accepts a model name and resolves the correct download URL automatically. Supports both full-precision and quantized variants. Reports file size and confirms validity after completion.
+This gap is invisible to users who reasonably interpret "no data leaves your machine" to cover all content derived from their audio.
 
-Implemented using Node.js built-in `https` or `fetch` (Node 18+ minimum is already required). No new external runtime dependencies.
+Add `WHISPER_PRIVACY_MODE` as an environment variable in `claude_desktop_config.json`. When enabled:
+- All tool responses return only metadata: filename, duration, word count, completion status
+- No transcript text is included in any tool response
+- Claude cannot read, analyze, or relay transcript content in any form
+- The transcript exists only as a local `.txt` file
 
-**Supported models (full-precision):** `tiny.en`, `base.en`, `small.en`, `medium.en`, `large-v3`, `large-v3-turbo`, and multilingual variants.
+This is the correct solution for medical, legal, financial, and corporate deployments. Zero API calls, zero data transmission, zero compliance risk.
 
-**Supported models (quantized):** `base.en-q5_1`, `small.en-q5_1`, `medium.en-q5_0`, `large-v3-q5_0`, `large-v3-turbo-q5_0`, and other GGML quantization variants. Quantized models are 40–70% smaller than full-precision with minimal accuracy loss and significantly faster CPU inference — strongly recommended for users without GPU acceleration.
+### Consent Gate for Transcript Content
+When `WHISPER_PRIVACY_MODE` is not enabled (default), any tool response that includes transcript text should be preceded by a disclosure on first use per session. The disclosure must clearly communicate that transcript text is transmitted to Anthropic's API, that this is outside the "no data leaves your machine" guarantee, and that users handling regulated content should verify compliance obligations before proceeding.
 
-### `switch_model`
-Change the active model for the current session without restarting Claude Desktop or editing config files. Validates the file exists, checks no transcription is currently running (process lock enforced), and updates the active model in memory. Session-scoped — does not persist to config.
+Implementation: `WHISPER_CONSENT_ACKNOWLEDGED` environment variable defaulting to `false`. On first transcript return per session, if not acknowledged, Claude presents the disclosure and asks for explicit confirmation. Once acknowledged for the session, subsequent transcripts return without re-prompting.
 
-**Implementation:** Change `WHISPER_MODEL` from `const` to a module-level `let`. `switch_model` updates it directly. Next transcription uses the new model.
+### `PRIVACY.md` Documentation
+Create `PRIVACY.md` in the repo root covering:
+- What data stays local (always): audio files, video files, model files
+- What data may leave local (by default): transcript text in tool responses
+- What data never leaves local (with privacy mode): everything
+- Compliance framework guidance by industry (HIPAA, GDPR, attorney-client privilege, FERPA, SOX, PCI-DSS, NDA/trade secret)
+- How to configure privacy mode
+- Disclaimer that the tool authors are not legal advisors
 
-### `large-v3-turbo` Documentation
-`large-v3-turbo` is a distilled variant of `large-v3` approximately 6x faster with minimal accuracy loss for English conversational content. Documented as the recommended model for English-language batch work where GPU is available. `large-v3-turbo-q5_0` is the recommended option for CPU-only users needing multilingual support.
+### Tool Schema Privacy Warnings
+Update `ListToolsRequestSchema` tool descriptions to include a privacy note on any tool that returns transcript text. This surfaces in Claude Desktop's tool descriptions and creates awareness at the point of use.
 
-Updates required: model tables in README and README.ja.md, `check_system` recommendations, `list_models` use-case descriptions, `download_model` supported model list.
+### Temp Directory Auto-Cleanup
+`%TEMP%\whisper-mcp-jobs\` accumulates job state and log files over time. Add automatic cleanup of completed job files after a configurable retention window (default: 7 days). Currently requires manual `Remove-Item` by the user.
 
 ---
 
 ## Planned — Bun Migration
 
-Migrate the runtime from Node.js to [Bun](https://bun.sh) before the v2.2.0 feature additions.
+Migrate the runtime from Node.js to [Bun](https://bun.sh) after privacy architecture is complete and before v2.3.0 feature additions.
 
-Because Claude Desktop spawns the MCP server fresh on every session startup, startup time is in the critical path. Bun runs TypeScript natively without a compilation step, starts significantly faster than Node, and has faster I/O — all of which directly benefit this use case.
+Because Claude Desktop spawns the MCP server fresh on every session startup, startup time is in the critical path. Bun runs TypeScript natively without a compilation step, starts significantly faster than Node, and has faster I/O.
 
 **What changes:**
-- Eliminates the `tsc` build step and `dist/` directory entirely
+- Eliminates the `tsc` build step and `dist/` directory
 - Users run TypeScript source directly
-- `tsconfig.json` becomes optional / simplified
+- `tsconfig.json` becomes optional
 - `package.json` scripts updated
 - npm publish workflow updated
 
 **What doesn't change:**
-- `src/index.ts` source code — Bun is compatible with the existing TypeScript and Node.js built-in APIs used throughout
+- `src/index.ts` source code — Bun is compatible with existing TypeScript and Node.js built-in APIs
 - All tool behavior and output formats
 - Claude Desktop config for end users
 
-**Why before v2.2.0:** The codebase is cleanest to migrate now, before additional tools are added. Migrating after adds migration surface area with no benefit.
+**Why after privacy, before v2.3.0:** The codebase is cleanest to migrate before additional tools are added. Migrating after adds surface area with no benefit. Privacy architecture must be in place first as noted above.
 
 ---
 
-## Planned — v2.2.0: Quality, Parameter, and Hardware Expansion
+## Planned — License Review (After Bun Migration)
 
-### `temperature` Parameter
-Expose whisper's `--temperature` flag in `transcribe_audio` and `generate_subtitles`. Range 0.0–1.0. Higher values introduce variation in segment decoding and can reduce hallucination on noisy or low-confidence audio at the cost of consistency. Default: `0.0` (deterministic). Low implementation cost — single CLI flag passthrough.
+The current MIT license permits unlimited commercial use without restriction. Before the tool reaches professional and enterprise markets at scale, the license situation must be evaluated.
 
-### `prompt` Parameter
-Expose whisper's `--prompt` flag in `transcribe_audio` and `generate_subtitles`. Accepts a string injected as prior context before transcription begins. Useful for domain-specific vocabulary, speaker names, or stylistic context. Can meaningfully improve accuracy on specialized content.
+**Planned approach — Dual license:**
+- MIT for personal and non-commercial use (no change for existing users)
+- Separate commercial license for business and enterprise use
+- Transition point: next major version release following the Bun migration
 
-Example: `"Names: Keemstar, DramaAlert. This is a streaming commentary recording."`
+**Why not now:** Licensing changes before the privacy architecture is complete would mean selling commercial licenses for a tool with unresolved HIPAA/GDPR compliance gaps. Privacy ships first. License review follows.
 
-Low implementation cost — single CLI flag passthrough.
-
-### `--condition-on-previous-text` as User Parameter
-Hardcoded to `0` in v2.0.1. Expose as an optional boolean for advanced users who want to re-enable conditioning for structured audio where context continuity helps. Default remains `0`.
-
-### `word_timestamps` Flag
-Expose word-level timestamp output using `--max-len 1` combined with `--split-on-word`. This produces per-word output in the standard timestamp format without requiring JSON parsing — a significantly simpler implementation than the `-oj` JSON approach originally planned. Returns a transcript with one word per timestamped segment.
-
-The `--max-len` parameter is also exposed independently as `max_segment_length` for users who want longer segments with controlled line breaks (e.g. for subtitle readability).
-
-### Voice Activity Detection (VAD)
-Expose whisper's `--vad` flag with integration into the model management workflow. VAD preprocesses audio through a lightweight Silero model that detects speech segments and strips silence and noise before passing audio to whisper. Results: faster transcription (only speech is processed) and significantly fewer hallucinations (whisper never sees silence to hallucinate over).
-
-**Implementation:** Requires a separate VAD model file (`ggml-silero-v5.1.2.bin` or current equivalent) downloaded from `huggingface.co/ggml-org/whisper-vad`. This model is added as a supported download in `download_model`. The `--vad-model` path is passed alongside `--vad` when VAD is enabled.
-
-**VAD is confirmed stable and Windows-compatible** as of whisper.cpp v1.8.3 (January 2026), with a buffer overflow fix shipped in v1.8.4 (March 2026). Recommend targeting v1.8.4+ binaries.
-
-This is the highest-impact quality addition in this milestone — strongly recommended for batch processing of long or noisy files.
-
-### Built-in Stereo Diarization (`--diarize`)
-Expose whisper's native `-di` / `--diarize` flag. For stereo audio files where speakers are recorded on separate channels (left/right), this flag outputs speaker-attributed transcript segments. Zero extra dependencies, no additional models required — purely a CLI flag passthrough.
-
-Distinct from the pyannote-based speaker diarization planned for future releases, which handles mono recordings and requires a separate Python dependency stack. This is the lightweight, zero-cost option for stereo content.
-
-### Time Range Transcription (`--offset-t`, `--duration`)
-Expose `--offset-t` (start offset in milliseconds) and `--duration` (processing duration in milliseconds) in `transcribe_audio`. Allows transcribing a specific time window within a file without processing the entire thing. Useful for re-running problem sections of long files, spot-checking output, or extracting specific segments.
-
-### `--beam-size` / `--best-of` Parameters
-Expose whisper's beam search controls. `--beam-size` (default 5) controls the breadth of the search — higher values improve accuracy at the cost of speed. `--best-of` (default 5) controls how many candidate sequences are evaluated. Useful for users who want to trade processing time for accuracy on critical files. Low implementation cost — CLI flag passthroughs.
-
-### `--gpu-device` Parameter
-Expose the `-g` / `--gpu-device` flag added in whisper.cpp v1.8.4. Allows users with multiple GPUs to specify which device whisper uses by index. Surface the available GPU list in `check_system` output so users know which index corresponds to which device. Relevant for systems with both integrated and discrete GPUs.
-
-### `--processors` Parameter
-Expose the `-p` / `--processors` flag for parallel chunk processing across multiple CPU processors. Can reduce processing time on multi-core systems beyond what thread count alone achieves. Low implementation cost.
+The commercial license, tool schema privacy warnings, and `PRIVACY.md` together form the minimum viable compliance story for enterprise buyers.
 
 ---
 
@@ -183,7 +192,7 @@ Expose the `-p` / `--processors` flag for parallel chunk processing across multi
 WebVTT (`.vtt`) output alongside SRT. VTT is the web standard used by YouTube, HTML5 `<video>`, and most modern players. whisper-cli supports it natively. Add `vtt` as a valid output format in `transcribe_audio`, `generate_subtitles`, and `spawnDetached`. Update `buildArgs` and all relevant tool schemas, README, and Japanese docs.
 
 ### LRC Format
-LRC (`.lrc`) lyrics/karaoke format output via `-olrc`. Used by media players for synchronized lyric display. Niche use case but zero implementation cost — native CLI flag.
+LRC (`.lrc`) lyrics/karaoke format output via `-olrc`. Used by media players for synchronized lyric display. Zero implementation cost — native CLI flag.
 
 ### CSV Format
 CSV (`.csv`) output via `-ocsv`. Structured tabular data with segment timing — useful for downstream analysis, clip alignment workflows, and import into spreadsheet tools. Zero implementation cost — native CLI flag.
@@ -216,12 +225,12 @@ For users managing large video editing projects with source and edited clip dire
 - Search is a standalone tool, usable independently
 - Analysis and matching happen locally — Claude is only invoked when the user reviews results, minimizing API calls
 
-**Status:** Design phase. Implementation pending real-world directory structure examples.
+**Status:** Design phase.
 
 ### Speaker Diarization (pyannote-audio)
 Full mono speaker diarization with speaker ID labels — marks speaker transitions across an entire recording regardless of channel configuration. Distinct from the built-in `--diarize` stereo flag (v2.2.0) and TinyDiarize.
 
-**Implementation:** Requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python-based library with a Hugging Face model access token requirement. Entirely separate dependency stack from the whisper.cpp pipeline.
+**Implementation:** Requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python-based library with a Hugging Face model access token requirement. Entirely separate dependency stack.
 
 **Status:** Optional advanced feature with its own setup documentation. Not included in the main package.
 

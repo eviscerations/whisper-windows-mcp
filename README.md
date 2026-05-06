@@ -340,12 +340,13 @@ This tool is built to minimize Claude API interactions. The entire transcription
 | `WHISPER_MODEL` | Path to model .bin file (required) |
 | `WHISPER_THREADS` | CPU thread count override |
 | `FFMPEG_PATH` | Path to ffmpeg if not in system PATH |
+| `WHISPER_PRIVACY_MODE` | **Planned.** When set to `true`, tool responses return metadata only — no transcript text is returned to Claude's API. For regulated or confidential content. See [PRIVACY.md](PRIVACY.md). |
 
 ---
 
 ## Troubleshooting
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed solutions.
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed solutions. See [PRIVACY.md](PRIVACY.md) for compliance guidance if you handle regulated content.
 
 Quick checklist:
 - Paths in config use **double backslashes** (`C:\\whisper\\...`)
@@ -357,11 +358,15 @@ Quick checklist:
 
 ---
 
-## Security
+## Security and Privacy
 
 whisper-windows-mcp is designed with security as a core principle.
 
-**All processing is local.** No audio, transcripts, or file paths ever leave your machine. No telemetry. No cloud APIs required for core functionality.
+**Audio never leaves your machine.** No audio or video files, no file paths, and no telemetry are ever transmitted to any server. No cloud APIs are required for core functionality.
+
+**Transcript text and the API boundary.** When a tool response includes transcript text, that text is processed by Claude's API — it leaves your local machine. For most users (public content, podcasts, streaming recordings) this is expected behavior. If you handle medical, legal, financial, or other regulated recordings, see [PRIVACY.md](PRIVACY.md) for compliance guidance and configuration options.
+
+A `WHISPER_PRIVACY_MODE` environment variable is planned that will restrict all tool responses to metadata only (filename, duration, word count) — no transcript text will be returned to Claude. This is the correct configuration for regulated or confidential content.
 
 **Input validation.** All file paths are validated before use — UNC paths (`\\server\share`) and directory traversal sequences (`..`) are rejected. Files over 10 GB are rejected to prevent resource exhaustion.
 
