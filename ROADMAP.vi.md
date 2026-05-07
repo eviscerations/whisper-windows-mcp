@@ -171,20 +171,15 @@ Vì Claude Desktop tạo máy chủ MCP mới khi khởi động mỗi phiên, t
 
 ---
 
-## Đã lên kế hoạch — Xem xét giấy phép (sau khi chuyển đổi Bun)
+## Giấy phép
 
-Giấy phép MIT hiện tại cho phép sử dụng thương mại không giới hạn. Trước khi công cụ tiếp cận thị trường chuyên nghiệp và doanh nghiệp ở quy mô lớn, tình huống giấy phép phải được đánh giá.
+whisper-windows-mcp được cấp phép kép.
 
-**Phương pháp đã lên kế hoạch — Giấy phép kép:**
-- MIT cho sử dụng cá nhân và phi thương mại (không thay đổi cho người dùng hiện tại)
-- Giấy phép thương mại riêng cho sử dụng kinh doanh và doanh nghiệp
-- Thời điểm chuyển đổi: bản phát hành chính tiếp theo sau khi chuyển đổi Bun
+**Sử dụng phi thương mại:** MIT — miễn phí cho mục đích cá nhân, giáo dục và phi thương mại. Xem [LICENSE](LICENSE).
 
-**Tại sao không phải bây giờ:** Thay đổi giấy phép trước khi kiến trúc quyền riêng tư hoàn thành có nghĩa là bán giấy phép thương mại cho công cụ có khoảng cách tuân thủ HIPAA/GDPR chưa được giải quyết. Quyền riêng tư ra mắt trước. Xem xét giấy phép theo sau.
+**Sử dụng thương mại:** Cần có thỏa thuận giấy phép thương mại riêng. Xem [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
 
-Giấy phép thương mại, cảnh báo riêng tư trong schema công cụ và `PRIVACY.md` cùng nhau tạo thành câu chuyện tuân thủ tối thiểu khả thi cho người mua doanh nghiệp.
-
----
+`WHISPER_PRIVACY_MODE` cho triển khai trong ngành được quản lý đang được phát triển và dự kiến trong phiên bản tương lai. Xem [PRIVACY.md](PRIVACY.md) để biết hướng dẫn hiện tại.
 
 ## Đã lên kế hoạch — v2.3.0: Mở rộng định dạng đầu ra
 

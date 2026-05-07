@@ -116,11 +116,15 @@ Migrar el runtime de Node.js a [Bun](https://bun.sh) tras la conclusión de la a
 
 ---
 
-## Planificado — Revisión de licencia (tras la migración a Bun)
+## Licenciamiento
 
-La licencia MIT actual permite uso comercial irrestrito. Se planifica una licencia dual: MIT para uso personal y no comercial, licencia comercial separada para uso empresarial y corporativo.
+whisper-windows-mcp usa licencia dual.
 
----
+**Uso no comercial:** MIT — gratuito para uso personal, educativo y no comercial. Ver [LICENSE](LICENSE).
+
+**Uso comercial:** Se requiere un acuerdo de licencia comercial separado. Ver [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
+
+`WHISPER_PRIVACY_MODE` para implementaciones en sectores regulados está en desarrollo y planificado para una versión futura. Ver [PRIVACY.md](PRIVACY.md) para orientación actual.
 
 ## Planificado — v2.3.0: Expansión de formatos de salida
 

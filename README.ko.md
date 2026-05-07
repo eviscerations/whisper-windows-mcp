@@ -382,9 +382,9 @@ whisper-windows-mcp는 보안을 핵심 원칙으로 설계되었습니다.
 
 ## 라이선스
 
-MIT
+**비상업적 사용:** MIT — 개인, 교육, 비상업적 목적의 사용은 무료입니다. [LICENSE](LICENSE)를 참조하세요.
 
----
+**상업적 사용:** 비즈니스, 전문적 또는 수익 창출 목적의 사용에는 별도의 상업용 라이선스가 필요합니다. 조건 및 연락처는 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)를 참조하세요.
 
 ## 기여
 

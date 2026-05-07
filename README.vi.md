@@ -382,9 +382,9 @@ Biến môi trường `WHISPER_PRIVACY_MODE` đang được lên kế hoạch, s
 
 ## Giấy phép
 
-MIT
+**Sử dụng phi thương mại:** MIT — miễn phí cho mục đích cá nhân, giáo dục và phi thương mại. Xem [LICENSE](LICENSE).
 
----
+**Sử dụng thương mại:** Cần có thỏa thuận giấy phép thương mại riêng cho bất kỳ mục đích kinh doanh, chuyên nghiệp hoặc tạo doanh thu nào. Xem [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) để biết điều khoản và thông tin liên hệ.
 
 ## Đóng góp
 

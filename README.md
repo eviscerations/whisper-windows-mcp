@@ -382,9 +382,9 @@ A `WHISPER_PRIVACY_MODE` environment variable is planned that will restrict all 
 
 ## License
 
-MIT
+**Non-commercial use:** MIT — free for personal, educational, and non-commercial use. See [LICENSE](LICENSE).
 
----
+**Commercial use:** A separate commercial license is required for any business, professional, or revenue-generating use. See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for terms and contact information.
 
 ## Contributing
 

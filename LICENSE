@@ -1,6 +1,25 @@
+whisper-windows-mcp is dual-licensed.
+
+NON-COMMERCIAL USE
+Personal, educational, and non-commercial use is governed by the MIT License below,
+free of charge, without restriction.
+
+COMMERCIAL USE
+Any commercial use — including but not limited to business operations, client service
+delivery, billable work product, regulated industry workflows, and integration into
+commercial products or services — requires a separate written commercial license
+agreement with the author.
+
+See LICENSE-COMMERCIAL.md for commercial license terms and contact information.
+
+Using this software for commercial purposes without a valid commercial license
+agreement is a violation of these terms.
+
+---
+
 MIT License
 
-Copyright (c) 2026 whisper-windows-mcp contributors
+Copyright (c) 2025 eviscerations
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

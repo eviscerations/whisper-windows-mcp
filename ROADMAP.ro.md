@@ -116,11 +116,15 @@ Migrează runtime-ul de la Node.js la [Bun](https://bun.sh) după finalizarea ar
 
 ---
 
-## Planificat — Revizuire licență (după migrarea la Bun)
+## Licențiere
 
-Licența MIT actuală permite utilizarea comercială nelimitată. Licențiere duală planificată: MIT pentru uz personal și non-comercial, licență comercială separată pentru uz de afaceri și corporativ.
+whisper-windows-mcp folosește licențiere duală.
 
----
+**Utilizare non-comercială:** MIT — gratuit pentru uz personal, educațional și non-comercial. Vezi [LICENSE](LICENSE).
+
+**Utilizare comercială:** Este necesar un acord de licență comercială separat. Vezi [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
+
+`WHISPER_PRIVACY_MODE` pentru implementări în sectoare reglementate este în curs de dezvoltare și planificat pentru o versiune viitoare. Vezi [PRIVACY.md](PRIVACY.md) pentru îndrumări actuale.
 
 ## Planificat — v2.3.0: Extindere formate de ieșire
 

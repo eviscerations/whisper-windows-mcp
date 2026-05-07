@@ -382,9 +382,9 @@ Variabila de mediu `WHISPER_PRIVACY_MODE` este planificată și va limita toate 
 
 ## Licență
 
-MIT
+**Utilizare non-comercială:** MIT — gratuit pentru uz personal, educațional și non-comercial. Vezi [LICENSE](LICENSE).
 
----
+**Utilizare comercială:** Este necesar un acord de licență comercială separat pentru orice utilizare în afaceri, profesională sau generatoare de venituri. Vezi [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) pentru termeni și informații de contact.
 
 ## Contribuții
 

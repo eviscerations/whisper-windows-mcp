@@ -382,9 +382,9 @@ Variabel lingkungan `WHISPER_PRIVACY_MODE` direncanakan yang akan membatasi semu
 
 ## Lisensi
 
-MIT
+**Penggunaan non-komersial:** MIT — gratis untuk penggunaan pribadi, pendidikan, dan non-komersial. Lihat [LICENSE](LICENSE).
 
----
+**Penggunaan komersial:** Diperlukan perjanjian lisensi komersial terpisah untuk penggunaan bisnis, profesional, atau menghasilkan pendapatan. Lihat [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) untuk syarat dan informasi kontak.
 
 ## Berkontribusi
 

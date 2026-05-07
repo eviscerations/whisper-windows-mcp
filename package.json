@@ -31,7 +31,7 @@
     "multilingual"
   ],
   "author": "eviscerations",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },

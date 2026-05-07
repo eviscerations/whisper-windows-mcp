@@ -171,20 +171,15 @@ Karena Claude Desktop menelurkan server MCP baru setiap kali sesi dimulai, waktu
 
 ---
 
-## Direncanakan — Tinjauan Lisensi (Setelah Migrasi Bun)
+## Lisensi
 
-Lisensi MIT saat ini mengizinkan penggunaan komersial tanpa batas. Sebelum alat ini mencapai pasar profesional dan perusahaan dalam skala besar, situasi lisensi harus dievaluasi.
+whisper-windows-mcp menggunakan lisensi ganda.
 
-**Pendekatan yang direncanakan — Lisensi ganda:**
-- MIT untuk penggunaan pribadi dan non-komersial (tidak ada perubahan untuk pengguna yang ada)
-- Lisensi komersial terpisah untuk penggunaan bisnis dan perusahaan
-- Titik transisi: rilis versi utama berikutnya setelah migrasi Bun
+**Penggunaan non-komersial:** MIT — gratis untuk penggunaan pribadi, pendidikan, dan non-komersial. Lihat [LICENSE](LICENSE).
 
-**Mengapa tidak sekarang:** Perubahan lisensi sebelum arsitektur privasi selesai berarti menjual lisensi komersial untuk alat dengan celah kepatuhan HIPAA/GDPR yang belum terselesaikan. Privasi dikirimkan lebih dulu. Tinjauan lisensi mengikuti.
+**Penggunaan komersial:** Diperlukan perjanjian lisensi komersial terpisah. Lihat [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
 
-Lisensi komersial, peringatan privasi schema alat, dan `PRIVACY.md` bersama-sama membentuk cerita kepatuhan minimum yang layak untuk pembeli perusahaan.
-
----
+`WHISPER_PRIVACY_MODE` untuk penerapan industri yang diatur sedang dalam pengembangan dan direncanakan untuk rilis mendatang. Lihat [PRIVACY.md](PRIVACY.md) untuk panduan saat ini.
 
 ## Direncanakan — v2.3.0: Perluasan Format Output
 

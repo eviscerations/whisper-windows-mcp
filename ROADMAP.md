@@ -171,20 +171,15 @@ Because Claude Desktop spawns the MCP server fresh on every session startup, sta
 
 ---
 
-## Planned — License Review (After Bun Migration)
+## Licensing
 
-The current MIT license permits unlimited commercial use without restriction. Before the tool reaches professional and enterprise markets at scale, the license situation must be evaluated.
+whisper-windows-mcp is dual-licensed.
 
-**Planned approach — Dual license:**
-- MIT for personal and non-commercial use (no change for existing users)
-- Separate commercial license for business and enterprise use
-- Transition point: next major version release following the Bun migration
+**Non-commercial use:** MIT — free for personal, educational, and non-commercial use. See [LICENSE](LICENSE).
 
-**Why not now:** Licensing changes before the privacy architecture is complete would mean selling commercial licenses for a tool with unresolved HIPAA/GDPR compliance gaps. Privacy ships first. License review follows.
+**Commercial use:** A separate commercial license is required for any business, professional, or revenue-generating use. See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for terms and contact information.
 
-The commercial license, tool schema privacy warnings, and `PRIVACY.md` together form the minimum viable compliance story for enterprise buyers.
-
----
+`WHISPER_PRIVACY_MODE` for regulated industry deployments is in development and planned for a future release. Until then, see [PRIVACY.md](PRIVACY.md) for current guidance on regulated content workflows.
 
 ## Planned — v2.3.0: Output Format Expansion
 

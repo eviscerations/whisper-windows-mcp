@@ -382,9 +382,9 @@ La variable de entorno `WHISPER_PRIVACY_MODE` está planificada y limitará toda
 
 ## Licencia
 
-MIT
+**Uso no comercial:** MIT — gratuito para uso personal, educativo y no comercial. Ver [LICENSE](LICENSE).
 
----
+**Uso comercial:** Se requiere un acuerdo de licencia comercial separado para cualquier uso empresarial, profesional o que genere ingresos. Ver [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) para los términos e información de contacto.
 
 ## Contribuciones
 
