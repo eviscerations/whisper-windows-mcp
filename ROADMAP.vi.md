@@ -276,6 +276,10 @@ Tài liệu tiếng Nhật, tiếng Hàn và tiếng Việt được duy trì so
 
 **Tiếng Tây Ban Nha (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
+**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+
+**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+
 Chào mừng đóng góp cộng đồng cho các ngôn ngữ khác.
 
 ---

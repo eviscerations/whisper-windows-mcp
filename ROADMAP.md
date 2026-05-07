@@ -311,6 +311,10 @@ Japanese and Korean documentation is maintained in parallel with English. The fo
 - `PRIVACY.es.md`
 - `SECURITY.es.md`
 
+**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+
+**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+
 Community contributions for other languages welcome.
 
 ---

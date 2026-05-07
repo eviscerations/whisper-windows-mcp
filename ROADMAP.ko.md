@@ -276,6 +276,10 @@ Whisper의 `--translate` 플래그는 영어만 대상으로 합니다. 임의�
 
 **스페인어 (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
+**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+
+**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+
 다른 언어로의 커뮤니티 기여를 환영합니다.
 
 ---

@@ -291,6 +291,10 @@ Whisperの`--translate`フラグは英語のみを対象としています。任
 **スペイン語 (`*.es.md`)**
 - `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
+**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+
+**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+
 他の言語へのコミュニティ貢献を歓迎します。
 
 ---
