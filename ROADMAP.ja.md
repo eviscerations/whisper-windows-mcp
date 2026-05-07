@@ -276,6 +276,21 @@ Whisperの`--translate`フラグは英語のみを対象としています。任
 - `PRIVACY.ko.md`
 - `SECURITY.ko.md`
 
+**ベトナム語 (`*.vi.md`)**
+- `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
+
+**インドネシア語 (`*.id.md`)**
+- `README.id.md` / `TROUBLESHOOTING.id.md` / `ROADMAP.id.md` / `PRIVACY.id.md` / `SECURITY.id.md`
+
+**ウクライナ語 (`*.uk.md`)**
+- `README.uk.md` / `TROUBLESHOOTING.uk.md` / `ROADMAP.uk.md` / `PRIVACY.uk.md` / `SECURITY.uk.md`
+
+**ブラジルポルトガル語 (`*.pt-BR.md`)**
+- `README.pt-BR.md` / `TROUBLESHOOTING.pt-BR.md` / `ROADMAP.pt-BR.md` / `PRIVACY.pt-BR.md` / `SECURITY.pt-BR.md`
+
+**スペイン語 (`*.es.md`)**
+- `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
+
 他の言語へのコミュニティ貢献を歓迎します。
 
 ---

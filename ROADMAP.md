@@ -276,6 +276,41 @@ Japanese and Korean documentation is maintained in parallel with English. The fo
 - `PRIVACY.ko.md`
 - `SECURITY.ko.md`
 
+**Vietnamese (`*.vi.md`)**
+- `README.vi.md`
+- `TROUBLESHOOTING.vi.md`
+- `ROADMAP.vi.md`
+- `PRIVACY.vi.md`
+- `SECURITY.vi.md`
+
+**Indonesian (`*.id.md`)**
+- `README.id.md`
+- `TROUBLESHOOTING.id.md`
+- `ROADMAP.id.md`
+- `PRIVACY.id.md`
+- `SECURITY.id.md`
+
+**Ukrainian (`*.uk.md`)**
+- `README.uk.md`
+- `TROUBLESHOOTING.uk.md`
+- `ROADMAP.uk.md`
+- `PRIVACY.uk.md`
+- `SECURITY.uk.md`
+
+**Brazilian Portuguese (`*.pt-BR.md`)**
+- `README.pt-BR.md`
+- `TROUBLESHOOTING.pt-BR.md`
+- `ROADMAP.pt-BR.md`
+- `PRIVACY.pt-BR.md`
+- `SECURITY.pt-BR.md`
+
+**Spanish (`*.es.md`)**
+- `README.es.md`
+- `TROUBLESHOOTING.es.md`
+- `ROADMAP.es.md`
+- `PRIVACY.es.md`
+- `SECURITY.es.md`
+
 Community contributions for other languages welcome.
 
 ---

@@ -260,11 +260,21 @@ Whisper의 `--translate` 플래그는 영어만 대상으로 합니다. 임의�
 
 ## 다국어 문서
 
-일본어 및 한국어 문서는 영어와 병행하여 관리됩니다. 각 릴리스 후 다음 파일을 영어 문서에 맞게 업데이트해야 합니다:
+일본어, 한국어, 베트남어, 인도네시아어, 우크라이나어, 브라질 포르투갈어 및 스페인어 문서는 영어와 병행하여 관리됩니다. 각 릴리스 후 다음 파일을 영어 문서에 맞게 업데이트해야 합니다:
 
-- `README.ja.md` / `README.ko.md`
-- `TROUBLESHOOTING.ja.md` / `TROUBLESHOOTING.ko.md`
-- `ROADMAP.ja.md` / `ROADMAP.ko.md`
+**일본어 (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
+
+**한국어 (`*.ko.md`)** — `README.ko.md` / `TROUBLESHOOTING.ko.md` / `ROADMAP.ko.md` / `PRIVACY.ko.md` / `SECURITY.ko.md`
+
+**베트남어 (`*.vi.md`)** — `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
+
+**인도네시아어 (`*.id.md`)** — `README.id.md` / `TROUBLESHOOTING.id.md` / `ROADMAP.id.md` / `PRIVACY.id.md` / `SECURITY.id.md`
+
+**우크라이나어 (`*.uk.md`)** — `README.uk.md` / `TROUBLESHOOTING.uk.md` / `ROADMAP.uk.md` / `PRIVACY.uk.md` / `SECURITY.uk.md`
+
+**브라질 포르투갈어 (`*.pt-BR.md`)** — `README.pt-BR.md` / `TROUBLESHOOTING.pt-BR.md` / `ROADMAP.pt-BR.md` / `PRIVACY.pt-BR.md` / `SECURITY.pt-BR.md`
+
+**스페인어 (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
 다른 언어로의 커뮤니티 기여를 환영합니다.
 
