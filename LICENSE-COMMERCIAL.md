@@ -1,5 +1,7 @@
 # Commercial License — whisper-windows-mcp
 
+**Licensor:** Shashin Studio LLC, a Montana limited liability company
+
 ## Who needs a commercial license?
 
 A commercial license is required for any use of whisper-windows-mcp in a business,
