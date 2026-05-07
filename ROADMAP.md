@@ -260,11 +260,21 @@ Available on [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpserve
 
 ## Multilingual Documentation
 
-Japanese documentation is maintained in parallel with English. The following files must be updated to match English docs after each release:
+Japanese and Korean documentation is maintained in parallel with English. The following files must be updated to match English docs after each release:
 
+**Japanese (`*.ja.md`)**
 - `README.ja.md`
 - `TROUBLESHOOTING.ja.md`
 - `ROADMAP.ja.md`
+- `PRIVACY.ja.md`
+- `SECURITY.ja.md`
+
+**Korean (`*.ko.md`)**
+- `README.ko.md`
+- `TROUBLESHOOTING.ko.md`
+- `ROADMAP.ko.md`
+- `PRIVACY.ko.md`
+- `SECURITY.ko.md`
 
 Community contributions for other languages welcome.
 

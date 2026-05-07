@@ -260,11 +260,21 @@ Whisperの`--translate`フラグは英語のみを対象としています。任
 
 ## 多言語ドキュメント
 
-日本語ドキュメントは英語と並行して管理されます。各リリース後に英語ドキュメントに合わせて以下のファイルを更新する必要があります：
+日本語および韓国語ドキュメントは英語と並行して管理されます。各リリース後に英語ドキュメントに合わせて以下のファイルを更新する必要があります：
 
+**日本語 (`*.ja.md`)**
 - `README.ja.md`
 - `TROUBLESHOOTING.ja.md`
 - `ROADMAP.ja.md`
+- `PRIVACY.ja.md`
+- `SECURITY.ja.md`
+
+**韓国語 (`*.ko.md`)**
+- `README.ko.md`
+- `TROUBLESHOOTING.ko.md`
+- `ROADMAP.ko.md`
+- `PRIVACY.ko.md`
+- `SECURITY.ko.md`
 
 他の言語へのコミュニティ貢献を歓迎します。
 

@@ -1,6 +1,6 @@
 # whisper-windows-mcp
 
-A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop transcribe audio and video files locally using [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — with GPU acceleration, multilingual support, and batch processing. No internet connection required. No audio ever leaves your machine.
+A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop transcribe audio and video files locally using [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — with GPU acceleration, multilingual support, and batch processing. All transcription runs locally — no audio, video, or file paths ever leave your machine.
 
 > **Why does this exist?**
 > The popular `whisper-mcp` package was built for macOS and assumes a Unix environment. It does not work on Windows. This package was written specifically for Windows users who want local AI transcription integrated with Claude Desktop.
