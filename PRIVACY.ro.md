@@ -21,18 +21,18 @@ Această garanție este necondiționată pentru fișierele media.
 | Fișiere model Whisper | ❌ Niciodată |
 | Fișiere WAV temporare de conversie | ❌ Niciodată (șterse după transcriere) |
 | Fișiere de stare lot și sarcini | ❌ Niciodată |
-| Fișiere transcriere `.txt` / `.srt` pe disc | ❌ Niciodată |
+| Fișiere transcriere `.txt` / `.srt` / `.vtt` pe disc | ❌ Niciodată |
 
 ---
 
-## Date care pot părăsi calculatorul (comportament implicit)
+## Date care pot părăsi calculatorul (modul standard)
 
 Când un răspuns al instrumentului include text de transcriere, acel text este returnat la Claude Desktop și procesat de API-ul Anthropic. Acesta este comportamentul standard MCP — textul călătorește de la serverul MCP local la modelul Claude prin rețea.
 
 | Date | Părăsește calculatorul? |
 |---|---|
-| Text de transcriere returnat inline în răspunsurile instrumentelor | ✅ Da, implicit |
-| Text de transcriere încărcat direct la Claude ca fișier | ✅ Da (în afara MCP) |
+| Text de transcriere returnat inline în răspunsurile instrumentelor | ✅ Da, în modul standard |
+| Text de transcriere încărcat direct la Claude ca fișier | ✅ Da (în afara MCP — niciun control de confidențialitate nu se aplică) |
 
 Acest decalaj există între garanția instrumentului "nicio dată nu părăsește calculatorul tău" și comportamentul real când ceri lui Claude să citească, să rezume sau să analizeze o transcriere. Majoritatea utilizatorilor — cei care transcriu conținut public precum videoclipuri YouTube, podcasturi sau înregistrări streaming — nu sunt afectați de această distincție.
 
@@ -40,18 +40,20 @@ Pentru utilizatorii care gestionează înregistrări private, confidențiale sau
 
 ---
 
-## Modul de confidențialitate (planificat — nu este încă implementat)
+## Modul de confidențialitate
 
-O variabilă de mediu `WHISPER_PRIVACY_MODE` este planificată pentru o versiune viitoare. Când este activată:
+`WHISPER_PRIVACY_MODE` restricționează toate răspunsurile instrumentelor doar la metadate. Când este activ:
 
-- Toate răspunsurile instrumentelor returnează doar metadate: numele fișierului, durata, numărul de cuvinte, starea de finalizare
+- Răspunsurile instrumentelor returnează doar: numele fișierului, numărul de cuvinte, calea de salvare, starea de finalizare
 - Niciun text de transcriere nu este inclus în niciun răspuns al instrumentului
 - Claude nu poate citi, analiza sau retransmite conținut de transcriere în nicio formă
-- Transcrierile există doar ca fișiere `.txt` locale pe disc
+- Transcrierile există doar ca fișiere locale pe disc
 
-Acest mod este conceput pentru implementări juridice, medicale, financiare și corporative unde conținutul de transcriere nu trebuie să părăsească mediul local în nicio circumstanță.
+Modul de confidențialitate este conceput pentru implementări juridice, medicale, financiare și corporative unde conținutul de transcriere nu trebuie să părăsească mediul local în nicio circumstanță.
 
-**Configurație planificată:**
+### Activare globală (variabilă de mediu)
+
+Setează în `claude_desktop_config.json`:
 
 ```json
 {
@@ -69,7 +71,72 @@ Acest mod este conceput pentru implementări juridice, medicale, financiare și 
 }
 ```
 
-Până la lansarea acestei funcții: dacă trebuie să analizezi conținut de transcriere fără a-l transmite la API-ul Claude, deschide fișierul `.txt` direct într-un editor de text local sau instrument de procesare.
+Necesită repornirea Claude Desktop pentru a intra în vigoare.
+
+### Activare per apel (fără repornire)
+
+Transmite `privacy_mode=true` direct oricărui instrument de transcriere:
+
+- *"Transcrie acest fișier în modul de confidențialitate"*
+- *"Începe un lot în acest folder, privacy_mode=true"*
+- *"Verifică progresul sarcinii job_123, privacy_mode=true"*
+
+Parametrul per apel suprascrie variabila de mediu globală în ambele direcții. Transmite `privacy_mode=false` pentru a dezactiva pentru un singur apel chiar și când `WHISPER_PRIVACY_MODE=true` global.
+
+### Comportamentul porții modului de confidențialitate
+
+Când modul de confidențialitate este activ, o dezvăluire de confirmare este afișată **înainte de fiecare operațiune**. Aceasta este intenționată — conformitatea reglementară necesită consimțământ informat înainte de fiecare eveniment de procesare, nu doar o dată pe sesiune.
+
+Textul dezvăluirii este identic de fiecare dată prin design. Repetiția este intenționată: dacă gestionezi conținut sensibil, ar trebui să confirmi explicit fiecare operațiune.
+
+Pentru `start_batch` cu modul de confidențialitate: o confirmare este necesară înainte de începerea lotului. Toate fișierele sunt apoi procesate nesupravegheate. Niciun text de transcriere nu este returnat în niciun moment — doar metadate de progres ale lotului.
+
+---
+
+## Poarta de consimțământ (modul standard)
+
+Când modul de confidențialitate nu este activ, o dezvăluire unică per sesiune este afișată înainte ca orice text de transcriere să fie returnat la API-ul Claude pentru prima dată în sesiune.
+
+Dezvăluirea acoperă:
+- Că textul de transcriere va fi transmis la API-ul Anthropic
+- Cadrele reglementare care pot fi aplicabile conținutului tău
+- Cum să activezi modul de confidențialitate dacă este necesar
+- Cum să suprimezi permanent poarta pentru conținut non-sensibil
+
+După confirmare, poarta nu se mai activează pentru restul sesiunii. Repornirea Claude Desktop resetează sesiunea și poarta se activează din nou la următorul apel care returnează transcriere.
+
+**Pentru sarcini în fundal:** poarta de consimțământ se activează la finalizarea `check_progress`, nu la apelul `transcribe_audio`. La momentul apelului, textul de transcriere nu există încă — nu este nimic de blocat. Poarta se activează în momentul în care textul de transcriere ar fi returnat pentru prima dată la API.
+
+### Suprimarea permanentă a porții
+
+Dacă transcrii în mod regulat conținut non-sensibil și nu mai ai nevoie de memento, setează în configurația ta:
+
+```json
+"WHISPER_CONSENT_ACKNOWLEDGED": "true"
+```
+
+Aceasta nu are niciun efect când modul de confidențialitate este activ. Modul de confidențialitate folosește propria sa poartă per operațiune care se activează întotdeauna indiferent de această setare.
+
+---
+
+## Rezumat flux de date
+
+| Mod | Audio | Text de transcriere | Confirmare necesară |
+|---|---|---|---|
+| Standard | Doar local | Trimis la API-ul Anthropic | O dată per sesiune (poarta de consimțământ) |
+| Mod confidențialitate (var. mediu) | Doar local | Niciodată transmis | Înainte de fiecare operațiune |
+| Mod confidențialitate (per apel) | Doar local | Nu pentru acest apel | Înainte de această operațiune |
+| `WHISPER_CONSENT_ACKNOWLEDGED=true` | Doar local | Trimis la API-ul Anthropic | Niciodată (suprimate) |
+
+---
+
+## Încărcarea fișierelor de transcriere direct la Claude
+
+Când încarci un fișier de transcriere `.txt` direct la Claude ca atașament — complet în afara instrumentului MCP — serverul MCP nu are vizibilitate și nu poate aplica niciun control de confidențialitate.
+
+Încărcarea unei transcrieri direct la Claude este echivalentă cu trimiterea conținutului audio către Anthropic. Modul de confidențialitate și toate protecțiile la nivel MCP sunt ocolite complet de încărcările directe de fișiere.
+
+Utilizatorii care gestionează conținut reglementat nu trebuie să încarce transcrieri direct la Claude. Singura cale de analiză sigură pentru conținut reglementat sunt instrumentele de procesare locale care nu transmit conținut extern.
 
 ---
 
@@ -82,21 +149,21 @@ Furnizorii de servicii medicale, asigurătorii și partenerii lor de afaceri au 
 
 **Cazuri de utilizare afectate:** Consultații cu pacienții, note clinice, sesiuni de terapie, apeluri de revendicări de asigurări, înregistrări administrative ale spitalelor.
 
-**Recomandare curentă:** Nu transcriere audio de pacienți și nu cere lui Claude să rezume sau să analizeze transcrierea dacă organizația ta nu a stabilit un aranjament de procesare conform. Folosește `WHISPER_PRIVACY_MODE` când devine disponibil.
+**Recomandare:** Activează `WHISPER_PRIVACY_MODE=true` înainte de a transcriere orice audio al pacienților. Nu dezactiva în mijlocul sesiunii.
 
 ### GDPR (UE/SEE)
 Datele personale ale rezidenților UE nu pot fi transferate procesorilor terți fără consimțământ explicit și bază legală pentru procesare. Textul de transcriere care conține nume, locații sau orice informații de identificare constituie date personale conform GDPR.
 
 **Cazuri de utilizare afectate:** Interviuri, întâlniri, înregistrări call center, proceduri judiciare care implică rezidenți UE.
 
-**Recomandare curentă:** Fii conștient că încărcarea transcrierilor care conțin date personale ale rezidenților UE la Claude poate avea implicații GDPR în funcție de rolul și scopul tău de procesare.
+**Recomandare:** Activează modul de confidențialitate pentru orice înregistrare care poate conține date personale ale rezidenților UE/SEE.
 
 ### Privilegiul avocat-client (SUA, Marea Britanie, Australia și majoritatea jurisdicțiilor de drept comun)
 Comunicările dintre avocați și clienți sunt privilegiate legal. Divulgarea către terți neautorizați poate renunța la privilegiu. Nu există un precedent legal stabilit care să protejeze comunicările avocat-client atunci când sunt procesate de API-uri AI comerciale.
 
 **Cazuri de utilizare afectate:** Depoziții legale, consultații cu clienți, înregistrări de strategie internă, interviuri cu martori.
 
-**Recomandare curentă:** Avocații care transcriu comunicări privilegiate nu ar trebui să încarce acele transcrieri la Claude pentru analiză fără o revizuire juridică independentă a implicațiilor privilegiului.
+**Recomandare:** Avocații care transcriu comunicări privilegiate ar trebui să activeze modul de confidențialitate. Nu dezactiva pentru analiză — folosește editori de text locali sau instrumente de procesare pentru conținut privilegiat.
 
 ### FERPA (SUA — educație)
 Înregistrările educaționale ale elevilor sunt protejate. Școlile și universitățile nu pot dezvălui informații identificabile ale elevilor unor terți fără consimțământ.
@@ -117,16 +184,6 @@ Datele cardurilor de plată nu pot fi stocate sau transmise în medii nesecuriza
 Informațiile comerciale confidențiale, formulele proprietare, detaliile produselor nelansate și informațiile de personal pot fi protejate prin contract sau lege.
 
 **Cazuri de utilizare afectate:** Întâlniri de strategie corporativă, discuții de C&D, apeluri de due diligence M&A, proceduri HR.
-
----
-
-## Încărcarea fișierelor de transcriere direct la Claude
-
-Când încarci un fișier de transcriere `.txt` direct la Claude ca atașament — complet în afara instrumentului MCP — serverul MCP nu are vizibilitate și nu poate aplica niciun control de confidențialitate.
-
-Încărcarea unei transcrieri direct la Claude este echivalentă cu trimiterea conținutului audio către Anthropic. Niciun mod de confidențialitate sau protecție viitoare la nivel MCP nu se va aplica încărcărilor directe de fișiere.
-
-Utilizatorii care gestionează conținut reglementat nu trebuie să încarce transcrieri direct la Claude. Singura cale de analiză sigură pentru conținut reglementat sunt instrumentele de procesare locale care nu transmit conținut extern.
 
 ---
 

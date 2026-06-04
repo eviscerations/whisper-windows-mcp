@@ -1,0 +1,6 @@
+{
+  "name": "whisper-windows-mcp",
+  "description": "Windows-native MCP server for local audio/video transcription using whisper.cpp with Vulkan GPU acceleration. Batch processing, model management, multilingual support. No cloud APIs, no Python required.",
+  "license": "MIT",
+  "homepage": "https://github.com/eviscerations/whisper-windows-mcp"
+}

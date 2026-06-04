@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Roadmap
 
-Current version: **v2.2.0**
+Current version: **v2.3.0**
 
 ---
 
@@ -54,104 +54,75 @@ Detached process architecture: `transcribe_audio` with `background=true` spawns 
 ### ✅ v2.0.0 — Unicode-Safe Paths + Background SRT
 **Unicode filenames:** Files with non-ASCII characters in the filename caused background transcription to silently fail. Fixed by routing all output through a sanitized job-ID-based temp path, then moving the result to the correct destination after completion.
 
-**SRT in background mode:** `spawnDetached` previously hardcoded `-otxt` regardless of requested format, and `generate_subtitles` blocked synchronously and hit the 4-minute MCP timeout on longer files. Fixed by adding `outputFormat` parameter to `spawnDetached`, supporting `text` and `srt` output in background mode.
+**SRT in background mode:** `spawnDetached` previously hardcoded `-otxt` regardless of requested format. Fixed by adding `outputFormat` parameter to `spawnDetached`, supporting `text` and `srt` output in background mode.
 
 ### ✅ v2.0.1 — Bug Fixes (shipped in v2.2.0)
-- `--max-context 0` hardcoded in both `buildArgs` and `spawnDetached` — prevents hallucination loops on long-form audio. `--condition-on-previous-text` and `--no-context` are not valid flags in the current binary (v1.8.3 era) — `--max-context N` is the correct flag.
+- `--max-context 0` hardcoded in both `buildArgs` and `spawnDetached` — prevents hallucination loops on long-form audio.
 - `--no-speech-thold 0.6` hardcoded in both functions — segments below confidence threshold treated as silence rather than hallucinated content.
 - Path validation (`validateInputPath`) — rejects UNC paths and `..` traversal.
 - `MAX_FILE_SIZE_MB = 10240` file size guard.
 - Transcript injection security comment in `transcribeSingle`.
-- Broken CLI batch command fixed in TROUBLESHOOTING.md and TROUBLESHOOTING.ja.md — documented the correct FFmpeg pre-conversion approach and `Start-Process -RedirectStandardOutput` method.
+- Broken CLI batch command fixed in TROUBLESHOOTING.md.
 
 ### ✅ v2.1.0 — Model Management Suite (shipped in v2.2.0)
 - `WHISPER_MODEL` changed from `const` to `let` (session-mutable).
 - `MODEL_REGISTRY` — 16 models, full-precision and quantized variants, Hugging Face download URLs.
-- `ALLOWED_HF_PREFIXES` — URL whitelist restricting downloads to `ggerganov/whisper.cpp` and `ggml-org` namespaces.
+- `ALLOWED_HF_PREFIXES` — URL allowlist restricting downloads to `ggerganov/whisper.cpp` and `ggml-org` namespaces.
 - `list_models` tool — scans models directory, shows active model, sizes, use cases, available downloads.
-- `download_model` tool — downloads from Hugging Face via Node.js built-in `https`, atomic rename (callback-before-rename to fix Windows file handle release race).
+- `download_model` tool — downloads from Hugging Face via Node.js built-in `https`, atomic rename.
 - `switch_model` tool — validates `.bin` extension, directory constraint, process lock check.
 - `recommendedModel()` updated to recommend `large-v3-turbo` for 6GB+ VRAM.
 
-### ✅ v2.2.0 — Quality, Parameter, and Hardware Expansion (current)
+### ✅ v2.2.0 — Quality, Parameter, and Hardware Expansion
 - `WhisperOptions` interface replacing positional args in `buildArgs`.
 - New parameters in `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - New parameters in `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
-- `spawnDetached` refactored — all quality flags now applied in background/batch mode.
-- `runSrtPass` updated to accept `extraOpts`.
-- Batch output fix — `readBatchProgress` now moves temp output to final destination before validating (was the root cause of all batch "failed" results).
+- `spawnDetached` refactored — all quality flags applied in background/batch mode.
+- Batch output fix — `readBatchProgress` now moves temp output to final destination before validating.
 
-**Flag compatibility note:** `gpu_device` / `-g` was added in whisper.cpp v1.8.4. The pre-built Vulkan binary in releases is v1.8.3-era — this parameter is accepted by the tool but will have no effect until users update to a v1.8.4+ binary.
+**Flag compatibility note:** `gpu_device` / `--device` was added in whisper.cpp v1.8.4. The pre-built Vulkan binary in releases is v1.8.3-era — this parameter is accepted by the tool but will have no effect until users update to a v1.8.4+ binary.
 
-**Confirmed valid flags in current binary (v1.8.3 era):**
-`--max-context`, `--no-speech-thold`, `--processors`, `--offset-t`, `--duration`, `--best-of`, `--beam-size`, `--diarize`, `--tinydiarize`, `--temperature`, `--prompt`, VAD flags.
+### ✅ v2.2.2 — Patch
+- Dual license fix — LICENSE and LICENSE-COMMERCIAL.md corrected.
+- Minor documentation corrections.
 
-**Not in current binary:** `--no-context` (use `--max-context 0`), `--condition-on-previous-text` (Python API name only), `--gpu-device` / `-g` (v1.8.4+).
+### ✅ v2.3.0 — Batch Auto-Advance, Privacy Architecture, Output Format Expansion
 
----
+**Batch auto-advance (critical bug fix):** `start_batch` previously required active polling to advance through the queue. An `on('exit')` handler is now attached to each spawned whisper-cli child process. When the process exits, the batch self-advances immediately via the exit callback with zero polling overhead and zero API calls consumed. A mutex prevents double-spawn between concurrent exit handler + `check_batch_progress` calls.
 
-## Critical Bug — Batch Auto-Advance (Confirmed, Fix Pending)
+**Privacy architecture:**
+- `WHISPER_PRIVACY_MODE` environment variable — when `true`, all tool responses return metadata only (filename, word count, save path). No transcript text is ever transmitted to Claude's API. Transcripts exist only as local files.
+- `WHISPER_CONSENT_ACKNOWLEDGED` environment variable — when `true`, suppresses the one-time session consent gate for non-sensitive content.
+- `privacy_mode` per-call parameter on `transcribe_audio`, `transcribe_batch`, `start_batch`, and `check_progress`. Overrides the global env var in either direction. No restart required to toggle per-call.
+- Privacy mode gate (`checkPrivacyGate()`) — fires before every operation when effective privacy mode is active. Arms on first call (shows disclosure), clears on second (allows). Resets after each operation. Completely independent of the session consent gate.
+- Session consent gate (`transcriptPolicy()`) — fires once per session before the first transcript-returning call in standard mode. Consumed by `sessionConsentGiven` flag.
+- `PRIVACY.md` — full compliance documentation covering HIPAA, GDPR, attorney-client privilege, FERPA, SOX, PCI-DSS, and NDA/trade secret.
+- Tool description privacy warnings on all transcript-returning tools.
 
-### Batch Does Not Advance Without Active Polling
+**Output format expansion:**
+- `vtt` — WebVTT subtitle output via `-ovtt`. Available in `transcribe_audio`, `generate_subtitles`, `start_batch`, and background mode.
+- `lrc` — LRC lyrics/karaoke format via `-olrc`. Available in `transcribe_audio` and background mode.
+- `csv` — CSV with timestamps via `-ocsv`. Available in `transcribe_audio` and background mode.
+- `output_format` default changed from `"text"` to `"timestamps"` across all tools and code paths. Plain text is now opt-in.
 
-`start_batch` does not autonomously advance through the queue between files. The batch only progresses when `check_batch_progress` is called. Without polling, the batch stalls indefinitely after each file — whisper-cli.exe exits, no new process spawns, and the queue does not advance.
+**Bug fixes:**
+- Bug 1: `output_format` was not forwarded to background jobs — default `"text"` was used regardless of requested format. Fixed by changing default to `"timestamps"` and forwarding correctly.
+- Bug 2: Silent `catch {}` in background job output move operation swallowed failures. Added explicit `existsSync` check with detailed failure message after the move.
+- Bug 3: Design comment added at the background spawn point documenting why the consent gate is intentionally deferred to `check_progress` for non-privacy background jobs.
 
-This breaks unattended overnight batch processing, which is a core design goal of the tool, and directly violates the design principle of minimizing Claude API calls. A 95-file batch of short clips required approximately 200 polling calls over 100 minutes to complete.
-
-**Root cause:** `readBatchProgress` contains all queue advancement logic. It only executes when `check_batch_progress` is explicitly called. There is no background timer, file watcher, or autonomous loop.
-
-**Planned fix — Option B (exit callback, strongly preferred):** Attach an `on('exit')` handler to the spawned whisper-cli child process. When the process exits, immediately invoke advancement logic to validate output and spawn the next job. Event-driven, fires exactly once per file completion, zero polling overhead, zero API calls consumed.
-
-**Option A (fallback only):** Background `setInterval` with duration-aware polling interval derived from FFprobe duration data already present in the batch state JSON. File size is not a reliable proxy for duration.
-
-**Additional constraint:** The fix must not spawn a second whisper-cli.exe while one is already running — the process lock must be respected in the auto-advance path.
-
-**Workaround (current):** Call `check_batch_progress` repeatedly until the batch completes. Approximately one poll per file required.
-
----
-
-## Planned — Privacy Architecture (Before Bun Migration)
-
-These changes must ship before the Bun migration and before any license changes that facilitate commercial or enterprise adoption. Shipping enterprise-grade tooling without resolved compliance protections creates liability for users in regulated industries.
-
-### `WHISPER_PRIVACY_MODE` Environment Variable
-The tool currently guarantees that no **audio** leaves the machine. It does not extend this guarantee to **transcript text** — when transcript content is returned inline in a tool response, that text is processed by Claude's API and leaves the local environment.
-
-This gap is invisible to users who reasonably interpret "no data leaves your machine" to cover all content derived from their audio.
-
-Add `WHISPER_PRIVACY_MODE` as an environment variable in `claude_desktop_config.json`. When enabled:
-- All tool responses return only metadata: filename, duration, word count, completion status
-- No transcript text is included in any tool response
-- Claude cannot read, analyze, or relay transcript content in any form
-- The transcript exists only as a local `.txt` file
-
-This is the correct solution for medical, legal, financial, and corporate deployments. Zero API calls, zero data transmission, zero compliance risk.
-
-### Consent Gate for Transcript Content
-When `WHISPER_PRIVACY_MODE` is not enabled (default), any tool response that includes transcript text should be preceded by a disclosure on first use per session. The disclosure must clearly communicate that transcript text is transmitted to Anthropic's API, that this is outside the "no data leaves your machine" guarantee, and that users handling regulated content should verify compliance obligations before proceeding.
-
-Implementation: `WHISPER_CONSENT_ACKNOWLEDGED` environment variable defaulting to `false`. On first transcript return per session, if not acknowledged, Claude presents the disclosure and asks for explicit confirmation. Once acknowledged for the session, subsequent transcripts return without re-prompting.
-
-### `PRIVACY.md` Documentation
-Create `PRIVACY.md` in the repo root covering:
-- What data stays local (always): audio files, video files, model files
-- What data may leave local (by default): transcript text in tool responses
-- What data never leaves local (with privacy mode): everything
-- Compliance framework guidance by industry (HIPAA, GDPR, attorney-client privilege, FERPA, SOX, PCI-DSS, NDA/trade secret)
-- How to configure privacy mode
-- Disclaimer that the tool authors are not legal advisors
-
-### Tool Schema Privacy Warnings
-Update `ListToolsRequestSchema` tool descriptions to include a privacy note on any tool that returns transcript text. This surfaces in Claude Desktop's tool descriptions and creates awareness at the point of use.
-
-### Temp Directory Auto-Cleanup
-`%TEMP%\whisper-mcp-jobs\` accumulates job state and log files over time. Add automatic cleanup of completed job files after a configurable retention window (default: 7 days). Currently requires manual `Remove-Item` by the user.
+**Additional:**
+- Temp directory auto-cleanup — `cleanupOldJobFiles()` runs at startup, deletes `.json` and `.log` files older than 7 days from `%TEMP%\whisper-mcp-jobs\`.
+- `check_config` now reports privacy mode status.
+- Startup log reports privacy mode on/off.
+- `Job` interface extended with `privacyMode: boolean` field.
+- `BatchState` interface extended with `privacyMode: boolean` field.
+- `BackgroundFormat` type excludes `json` (json in background mode remains unsupported — falls back to `text`).
 
 ---
 
-## Planned — Bun Migration
+## Planned — v2.4.0: Bun Migration
 
-Migrate the runtime from Node.js to [Bun](https://bun.sh) after privacy architecture is complete and before v2.3.0 feature additions.
+Migrate the runtime from Node.js to [Bun](https://bun.sh).
 
 Because Claude Desktop spawns the MCP server fresh on every session startup, startup time is in the critical path. Bun runs TypeScript natively without a compilation step, starts significantly faster than Node, and has faster I/O.
 
@@ -167,30 +138,25 @@ Because Claude Desktop spawns the MCP server fresh on every session startup, sta
 - All tool behavior and output formats
 - Claude Desktop config for end users
 
-**Why after privacy, before v2.3.0:** The codebase is cleanest to migrate before additional tools are added. Migrating after adds surface area with no benefit. Privacy architecture must be in place first as noted above.
+---
+
+## Planned — v2.5.0: Enhanced Output Formats for External Tool Integration
+
+Extended output format support targeted at downstream analysis and integration workflows. Exact scope to be defined based on user feedback post-v2.3.0.
 
 ---
 
-## Licensing
+## Planned — v2.6.0: Live Microphone Transcription Mode
 
-whisper-windows-mcp is dual-licensed.
+Real-time transcription from a live microphone input. Stream audio from a selected recording device to whisper in chunks, returning rolling transcript segments as they complete.
 
-**Non-commercial use:** MIT — free for personal, educational, and non-commercial use. See [LICENSE](LICENSE).
+**Design constraints:**
+- Device selection must be explicit — no silent default device capture
+- User must be able to stop the stream via a Claude Desktop interaction
+- Must not conflict with the one-whisper-instance-at-a-time constraint
+- Latency vs accuracy trade-off must be user-configurable
 
-**Commercial use:** A separate commercial license is required for any business, professional, or revenue-generating use. See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for terms and contact information.
-
-`WHISPER_PRIVACY_MODE` for regulated industry deployments is in development and planned for a future release. Until then, see [PRIVACY.md](PRIVACY.md) for current guidance on regulated content workflows.
-
-## Planned — v2.3.0: Output Format Expansion
-
-### VTT Subtitle Format
-WebVTT (`.vtt`) output alongside SRT. VTT is the web standard used by YouTube, HTML5 `<video>`, and most modern players. whisper-cli supports it natively. Add `vtt` as a valid output format in `transcribe_audio`, `generate_subtitles`, and `spawnDetached`. Update `buildArgs` and all relevant tool schemas, README, and Japanese docs.
-
-### LRC Format
-LRC (`.lrc`) lyrics/karaoke format output via `-olrc`. Used by media players for synchronized lyric display. Zero implementation cost — native CLI flag.
-
-### CSV Format
-CSV (`.csv`) output via `-ocsv`. Structured tabular data with segment timing — useful for downstream analysis, clip alignment workflows, and import into spreadsheet tools. Zero implementation cost — native CLI flag.
+**Status:** Design phase. Depends on a stable streaming API in whisper.cpp.
 
 ---
 
@@ -247,64 +213,39 @@ Post-processing pipeline:
 
 ---
 
+## Licensing
+
+whisper-windows-mcp is dual-licensed.
+
+**Non-commercial use:** MIT — free for personal, educational, and non-commercial use. See [LICENSE](LICENSE).
+
+**Commercial use:** A separate commercial license is required for any business, professional, or revenue-generating use. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for terms and contact information.
+
+---
+
 ## Distribution
 
-Available on [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), and [Glama](https://glama.ai).
+Available on [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai), and [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) (PR submitted).
 
 ---
 
 ## Multilingual Documentation
 
-Japanese and Korean documentation is maintained in parallel with English. The following files must be updated to match English docs after each release:
+The following files must be updated to match English docs after each release:
 
-**Japanese (`*.ja.md`)**
-- `README.ja.md`
-- `TROUBLESHOOTING.ja.md`
-- `ROADMAP.ja.md`
-- `PRIVACY.ja.md`
-- `SECURITY.ja.md`
+**Japanese (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
-**Korean (`*.ko.md`)**
-- `README.ko.md`
-- `TROUBLESHOOTING.ko.md`
-- `ROADMAP.ko.md`
-- `PRIVACY.ko.md`
-- `SECURITY.ko.md`
+**Korean (`*.ko.md`)** — `README.ko.md` / `TROUBLESHOOTING.ko.md` / `ROADMAP.ko.md` / `PRIVACY.ko.md` / `SECURITY.ko.md`
 
-**Vietnamese (`*.vi.md`)**
-- `README.vi.md`
-- `TROUBLESHOOTING.vi.md`
-- `ROADMAP.vi.md`
-- `PRIVACY.vi.md`
-- `SECURITY.vi.md`
+**Vietnamese (`*.vi.md`)** — `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
 
-**Indonesian (`*.id.md`)**
-- `README.id.md`
-- `TROUBLESHOOTING.id.md`
-- `ROADMAP.id.md`
-- `PRIVACY.id.md`
-- `SECURITY.id.md`
+**Indonesian (`*.id.md`)** — `README.id.md` / `TROUBLESHOOTING.id.md` / `ROADMAP.id.md` / `PRIVACY.id.md` / `SECURITY.id.md`
 
-**Ukrainian (`*.uk.md`)**
-- `README.uk.md`
-- `TROUBLESHOOTING.uk.md`
-- `ROADMAP.uk.md`
-- `PRIVACY.uk.md`
-- `SECURITY.uk.md`
+**Ukrainian (`*.uk.md`)** — `README.uk.md` / `TROUBLESHOOTING.uk.md` / `ROADMAP.uk.md` / `PRIVACY.uk.md` / `SECURITY.uk.md`
 
-**Brazilian Portuguese (`*.pt-BR.md`)**
-- `README.pt-BR.md`
-- `TROUBLESHOOTING.pt-BR.md`
-- `ROADMAP.pt-BR.md`
-- `PRIVACY.pt-BR.md`
-- `SECURITY.pt-BR.md`
+**Brazilian Portuguese (`*.pt-BR.md`)** — `README.pt-BR.md` / `TROUBLESHOOTING.pt-BR.md` / `ROADMAP.pt-BR.md` / `PRIVACY.pt-BR.md` / `SECURITY.pt-BR.md`
 
-**Spanish (`*.es.md`)**
-- `README.es.md`
-- `TROUBLESHOOTING.es.md`
-- `ROADMAP.es.md`
-- `PRIVACY.es.md`
-- `SECURITY.es.md`
+**Spanish (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
 **Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
 

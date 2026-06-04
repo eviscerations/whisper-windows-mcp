@@ -1,323 +1,333 @@
-# whisper-windows-mcp — Pemecahan Masalah
+# Pemecahan Masalah — whisper-windows-mcp
 
 ---
 
 ## Daftar Periksa Cepat
 
-Sebelum menyelidiki lebih dalam, verifikasi semua hal berikut:
+Sebelum menyelidiki masalah tertentu, verifikasi hal-hal dasar berikut:
 
-- Jalur di `claude_desktop_config.json` menggunakan **dua backslash** (`C:\\whisper\\...`)
-- `whisper-cli.exe` ada di jalur yang ditentukan dalam `WHISPER_CLI_PATH`
-- File model `.bin` ada di jalur yang ditentukan dalam `WHISPER_MODEL`
-- FFmpeg terpasang dan dapat diakses (`ffmpeg -version` berfungsi di command prompt)
+- Jalur di `claude_desktop_config.json` menggunakan **dua backslash** (`C:\\whisper\\Release\\whisper-cli.exe`)
+- `whisper-cli.exe` ada di jalur yang dikonfigurasi dalam `WHISPER_CLI_PATH`
+- File model `.bin` ada di jalur yang dikonfigurasi dalam `WHISPER_MODEL`
+- FFmpeg terpasang dan ada di PATH — jalankan `ffmpeg -version` di terminal untuk mengkonfirmasi
 - Claude Desktop sudah **di-restart penuh** setelah mengedit konfigurasi (keluar dari system tray, bukan sekadar menutup jendela)
-- Server whisper menampilkan **berjalan** (lencana hijau) di Pengaturan → Pengembang
+- Whisper menampilkan **lencana berjalan berwarna hijau** di Claude Desktop → Pengaturan → Pengembang
 
 ---
 
-## "whisper tidak terhubung" atau tidak ada alat yang tersedia
+## Instalasi dan Startup
 
-**Penyebab paling umum:** Claude Desktop tidak di-restart penuh setelah mengedit konfigurasi.
+### Whisper tidak muncul di Claude Desktop → Pengaturan → Pengembang
 
-1. Klik kanan ikon Claude di system tray → Keluar
-2. Buka kembali Claude Desktop
-3. Buka Pengaturan → Pengembang dan periksa lencana **berjalan** berwarna hijau di sebelah whisper
+1. Buka Claude Desktop → Pengaturan → Pengembang → Edit Konfigurasi
+2. Konfirmasi JSON valid — tempelkan ke [jsonlint.com](https://jsonlint.com) jika tidak yakin
+3. Konfirmasi `WHISPER_CLI_PATH` dan `WHISPER_MODEL` menunjuk ke file yang benar-benar ada
+4. Keluar dari Claude Desktop dari system tray (klik kanan ikon tray → Keluar)
+5. Luncurkan kembali Claude Desktop dan periksa lagi
 
-Jika masih tidak muncul:
+Jika whisper muncul tetapi menampilkan lencana error bukan hijau:
+- Tanya Claude: *"Periksa konfigurasi whisper"* — alat `check_config` mengembalikan pesan error yang spesifik
+- Buka Claude Desktop → Pengaturan → Pengembang → klik nama server untuk melihat log error
 
-1. Buka `claude_desktop_config.json` dan periksa kesalahan sintaks JSON (koma yang hilang, kurung kurawal yang tidak cocok)
-2. Pastikan semua jalur menggunakan dua backslash
-3. Jalankan `check_config` di Claude Desktop untuk mendapatkan diagnostik
+### Error "whisper-cli.exe tidak ditemukan"
+
+Jalur di `WHISPER_CLI_PATH` tidak sesuai dengan lokasi binary yang diekstrak.
+
+Jalur default yang diharapkan: `C:\whisper\Release\whisper-cli.exe`
+
+Konfirmasi file ada:
+```powershell
+Test-Path "C:\whisper\Release\whisper-cli.exe"
+```
+
+Seharusnya mengembalikan `True`. Jika mengembalikan `False`, ekstrak zip rilis ke `C:\whisper\Release\` atau perbarui `WHISPER_CLI_PATH` di konfigurasi Anda agar sesuai dengan lokasi sebenarnya.
+
+### Error "Model tidak ditemukan"
+
+Jalur di `WHISPER_MODEL` tidak sesuai dengan lokasi atau nama file model yang sebenarnya.
+
+Periksa direktori model:
+```powershell
+Get-ChildItem "C:\whisper\models\"
+```
+
+Nama file harus menyertakan nama lengkap termasuk sufiks kuantisasi, misalnya `ggml-large-v3-turbo-q5_0.bin` bukan `ggml-large-v3-turbo.bin`. Jika tidak ada model yang terpasang, gunakan `download_model` di Claude Desktop.
 
 ---
 
-## download_model timeout pada model besar
+## Akselerasi GPU
 
-Claude Desktop memiliki timeout 4 menit untuk panggilan alat MCP. Unduhan model besar pada koneksi lambat mungkin melebihi batas ini.
+### Transkripsi lambat — hanya CPU, tidak ada GPU
 
-**Ukuran file:**
-- `large-v3` — 2.9 GB
-- `large-v3-turbo` — 1.6 GB
-- `large-v3-q5_0` — 1.1 GB
-- `large-v3-turbo-q5_0` — 547 MB
-- `medium.en` — 1.5 GB
-- `medium.en-q5_0` — 514 MB
+Tanya Claude: *"Periksa hardware sistem"*
 
-Pada koneksi cepat (100 Mbps+), bahkan large-v3 selesai diunduh dalam waktu kurang dari 4 menit. Pada koneksi lebih lambat, gunakan browser atau PowerShell untuk mengunduh langsung dan tempatkan file di direktori model secara manual:
+Alat `check_system` mengkonfirmasi apakah `ggml-vulkan.dll` ada di direktori binary whisper. Jika DLL tidak ada, Anda menjalankan CPU-only terlepas dari GPU Anda.
+
+**Perbaikan:** Unduh `whisper-vulkan-win-x64.zip` dari [halaman rilis](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0) dan ekstrak ke `C:\whisper\Release\`. Zip menyertakan DLL — harus berada di direktori yang sama dengan `whisper-cli.exe`.
+
+### GPU terdeteksi tetapi utilisasi 0% selama transkripsi
+
+Binary berjalan tetapi tidak mendispatch ke GPU. Ini biasanya berarti:
+- Vulkan SDK tidak terpasang atau driver GPU tidak mengekspos antarmuka Vulkan
+- GPU lebih tua dari Vulkan 1.0 (jarang — sebagian besar GPU sejak 2016 mendukungnya)
+
+Periksa dukungan Vulkan:
+```powershell
+# Pasang vulkaninfo via Vulkan SDK jika diperlukan, kemudian:
+vulkaninfo
+```
+
+Output apa pun mengkonfirmasi Vulkan tersedia. Jika `vulkaninfo` gagal, pasang driver GPU terbaru dari situs vendor GPU Anda.
+
+### VRAM dilaporkan setengah ukuran sebenarnya (AMD)
+
+Ini adalah keanehan pelaporan Windows yang diketahui untuk GPU AMD dengan memori terpadu/berbagi. VRAM yang sebenarnya tersedia untuk pemrosesan biasanya dua kali lipat dari yang dilaporkan `wmic`. Rekomendasi model mungkin terlalu konservatif akibatnya — Anda bisa mencoba model yang lebih besar dari yang direkomendasikan dan mengamati apakah transkripsi berhasil diselesaikan.
+
+---
+
+## Kualitas Transkripsi
+
+### Output mengandung teks halusinasi atau frasa berulang
+
+Whisper terkadang berhalusinasi pada segmen audio yang senyap atau berkualitas rendah. Alat menerapkan `--max-context 0` dan `--no-speech-thold 0.6` secara default untuk meminimalkan hal ini.
+
+Pendekatan tambahan:
+- Gunakan `temperature=0.2` — sedikit keacakan membantu memutus loop halusinasi pada audio yang bising
+- Gunakan model VAD (Voice Activity Detection): unduh file `.bin` model Silero VAD dan teruskan jalurnya sebagai `vad_model`. Ini menghapus keheningan sebelum transkripsi, yang merupakan perbaikan paling efektif untuk halusinasi pada rekaman dengan jeda.
+- Gunakan model yang lebih besar (`large-v3` atau `large-v3-turbo`) — model yang lebih kecil lebih sering berhalusinasi pada audio yang sulit
+- Gunakan `prompt` untuk mengatur konteks: *"Ini adalah wawancara podcast tentang rekayasa perangkat lunak."*
+
+### Output transkripsi kosong atau sangat pendek
+
+Tanya Claude: *"Analisis file ini"* (`analyze_media`) untuk mengkonfirmasi file memiliki konten audio dan merupakan format yang dikenali.
+
+Jika FFprobe melaporkan audio tetapi transkripsi tidak menghasilkan apa-apa:
+- File mungkin dalam bahasa yang tidak sesuai dengan parameter `language` yang dikonfigurasi
+- Coba `language=auto` untuk membiarkan Whisper mendeteksi bahasa
+- Audio mungkin terlalu pelan atau telah diproses secara berlebihan — transkripsi memerlukan ucapan yang dapat dipahami
+
+### Output mode timestamps berbeda dari SRT
+
+Dalam mode `timestamps`, output dicetak ke stdout whisper sebagai baris `[HH:MM:SS.mmm --> HH:MM:SS.mmm]  teks` biasa. Dalam mode `srt`, whisper memformat output dalam blok SRT bernomor. Batas segmen mungkin sedikit berbeda karena kedua jalur menggunakan flag output yang berbeda. Keduanya valid — gunakan `srt` atau `vtt` saat Anda membutuhkan format file subtitle, dan `timestamps` saat Anda menginginkan teks bertimestamp mentah.
+
+---
+
+## Mode Privasi dan Gerbang Persetujuan
+
+### Saya tidak melihat prompt persetujuan sebelum transkripsi
+
+Gerbang persetujuan aktif **sekali per sesi** dalam mode standar. Jika Anda sudah mengkonfirmasi transkripsi dalam sesi ini (sejak restart Claude Desktop terakhir), gerbang tidak akan aktif lagi.
+
+Alasan lain gerbang mungkin tidak muncul:
+- `WHISPER_CONSENT_ACKNOWLEDGED=true` diatur di konfigurasi Anda — ini melewati gerbang sepenuhnya
+- `WHISPER_PRIVACY_MODE=true` diatur — mode privasi menggunakan gerbang per-operasi terpisahnya sendiri, bukan gerbang persetujuan
+- Anda memeriksa kemajuan transkripsi pemblokiran yang sudah selesai — gerbang dikonsumsi di awal tugas
+
+**Untuk mereset dan melihat gerbang lagi:** restart penuh Claude Desktop (keluar dari system tray, luncurkan kembali).
+
+### Claude memproses file saya tanpa bertanya terlebih dahulu
+
+Jika `WHISPER_CONSENT_ACKNOWLEDGED=true` ada di konfigurasi Anda, gerbang dilewati berdasarkan desain. Ini adalah perilaku yang dimaksudkan untuk pengguna yang telah meninjau implikasi privasi dan tidak lagi membutuhkan pengingat.
+
+Jika tidak diatur dan Claude melanjutkan tanpa bertanya, gerbang sesi sudah dikonsumsi oleh transkripsi sebelumnya dalam sesi yang sama. Gerbang aktif sekali per sesi.
+
+Untuk konfirmasi per-operasi pada setiap transkripsi terlepas dari status sesi, aktifkan mode privasi: teruskan `privacy_mode=true` atau atur `WHISPER_PRIVACY_MODE=true` di konfigurasi Anda.
+
+### Mode privasi aktif tetapi saya ingin membaca satu transkrip
+
+Teruskan `privacy_mode=false` langsung ke alat transkripsi untuk panggilan spesifik tersebut. Ini menggantikan pengaturan global `WHISPER_PRIVACY_MODE=true` hanya untuk satu panggilan itu:
+
+- *"Transkripsi file ini, privacy_mode=false"*
+
+Tidak perlu restart. Override hanya berlaku untuk panggilan alat tunggal tersebut.
+
+### Mode privasi meminta konfirmasi sebelum setiap file
+
+Ini adalah perilaku yang benar dan disengaja. Mode privasi memerlukan persetujuan per-operasi — gerbang aktif sebelum setiap transkripsi dan tidak dapat dilewati saat mode privasi aktif.
+
+Jika Anda perlu mentranskrip banyak file tanpa konfirmasi per-file dan kontennya tidak sensitif, nonaktifkan mode privasi:
+- Hapus `WHISPER_PRIVACY_MODE=true` dari konfigurasi Anda dan restart Claude Desktop
+- Atau teruskan `privacy_mode=false` per-panggilan untuk file yang tidak sensitif
+
+### Mengapa mode privasi bertanya setiap saat, tetapi gerbang persetujuan hanya bertanya sekali?
+
+Kedua gerbang melayani pengguna yang berbeda dengan kebutuhan yang berbeda.
+
+**Gerbang persetujuan** (mode standar) adalah pengungkapan informasi satu kali. Setelah Anda memahami bahwa teks transkrip dikirimkan ke API Claude, Anda tidak perlu diberitahu lagi dalam sesi ini.
+
+**Gerbang mode privasi** aktif setiap saat karena orang yang membutuhkannya — penyedia layanan kesehatan, pengacara, profesional keuangan — memerlukan konfirmasi per-operasi yang afirmatif sebagai bagian dari alur kerja kepatuhan mereka. Melewatinya akan mengalahkan tujuannya.
+
+### Tugas latar belakang dan gerbang persetujuan
+
+Untuk transkripsi latar belakang (`background=true`) dalam mode standar, gerbang persetujuan aktif di `check_progress` saat transkrip dikembalikan — **bukan** di `transcribe_audio` saat tugas dimulai. Pada saat tugas dimulai, belum ada transkrip yang ada. Membatasi sebelum tugas dimulai akan memblokir pemrosesan audio secara tidak perlu. Gerbang aktif begitu teks transkrip pertama kali akan dikembalikan ke API.
+
+Untuk tugas latar belakang mode privasi, gerbang aktif **sebelum spawning** — sebelum pemrosesan audio apa pun dimulai.
+
+### Bagaimana cara melewati gerbang persetujuan secara permanen?
+
+Atur `WHISPER_CONSENT_ACKNOWLEDGED=true` di bagian env `claude_desktop_config.json` Anda. Ini melewati pengungkapan sesi satu kali dalam mode standar.
+
+Catatan: ini tidak berpengaruh saat mode privasi aktif.
+
+---
+
+## Transkripsi Latar Belakang dan Batch
+
+### Tugas latar belakang tidak pernah menampilkan selesai
+
+Status tugas dilacak oleh exit proses whisper-cli.exe. Periksa:
+
+1. Tanya Claude: *"Periksa kemajuan job_id"* — jika proses masih berjalan, alat mengembalikan "Sedang berlangsung" dengan waktu yang telah berlalu dan timestamp segmen terakhir
+2. Jika file sangat panjang (2+ jam), tunggu lebih lama — transkripsi GPU file 2 jam membutuhkan sekitar 15–20 menit pada GPU kelas menengah
+3. Jika waktu yang telah berlalu tampak salah, buka Task Manager → Detail dan periksa apakah `whisper-cli.exe` ada dalam daftar
+
+Jika `whisper-cli.exe` tidak berjalan tetapi `check_progress` masih menampilkan "Sedang berlangsung":
+- Proses keluar dengan error dan tidak meninggalkan file output
+- Tanya Claude: *"Periksa kemajuan job_id"* — alat akan mendeteksi tidak ada PID dan tidak ada file output dan melaporkan error dengan baris log terakhir
+
+### Tugas latar belakang selesai tetapi file output hilang atau di lokasi yang salah
+
+Tugas latar belakang menulis output ke jalur temp di `%TEMP%\whisper-mcp-jobs\` selama pemrosesan, kemudian memindahkan file ke direktori sumber saat selesai. Jika pemindahan gagal (disk penuh, masalah izin, atau panjang jalur), `check_progress` mengembalikan error spesifik:
+
+> "Penulisan file output gagal. Transkripsi selesai tetapi tidak dapat ditulis ke: [jalur]"
+
+Periksa:
+- Direktori sumber ada dan dapat ditulis
+- Ada cukup ruang disk
+- Jalur target tidak terlalu panjang (Windows memiliki batas jalur 260 karakter secara default)
+
+Output mentah mungkin masih ada di `%TEMP%\whisper-mcp-jobs\` dengan nama file berbasis ID tugas.
+
+### Batch macet atau tidak maju ke file berikutnya
+
+`start_batch` menggunakan exit callback untuk maju sendiri tanpa polling. Jika batch tampak macet:
+
+1. Panggil `check_batch_progress` — ini memaksa pemeriksaan kemajuan dan mengevaluasi ulang status saat ini
+2. Jika file saat ini masih berjalan, tunggu hingga selesai — periksa Task Manager untuk `whisper-cli.exe`
+3. Jika `check_batch_progress` menampilkan file saat ini sebagai gagal, ia akan mencoba maju ke file berikutnya
+
+Catatan: di v2.3.0 dan lebih baru, batch maju sendiri melalui exit callback saat setiap file selesai. Anda tidak perlu melakukan polling berulang kali — memanggil `check_batch_progress` sekali setelah beberapa waktu berlalu sudah cukup untuk mendapatkan pembaruan status.
+
+### Batch melaporkan file sebagai "gagal" meskipun terlihat lengkap
+
+Validator memeriksa bahwa file output tidak kosong dan memiliki setidaknya satu baris per 30 detik audio. File pendek atau rekaman dengan bagian senyap yang panjang mungkin menghasilkan output yang dianggap validator terlalu pendek.
+
+Jika transkrip terlihat benar saat Anda membukanya:
+- Validasi terlalu konservatif untuk file ini
+- Jalankan ulang dengan `transcribe_audio` secara individual dan periksa hasilnya secara manual
+
+Jika output memang salah:
+- Coba `language=auto` jika bahasa mungkin tidak sesuai dengan pengaturan yang dikonfigurasi
+- Coba model yang lebih besar untuk akurasi yang lebih baik
+
+### Banyak file gagal segera di awal batch
+
+Ini biasanya berarti whisper-cli.exe sama sekali tidak berfungsi. Jalankan `check_config` untuk memverifikasi semua jalur, kemudian coba satu file dengan `transcribe_audio` untuk melihat error yang spesifik.
+
+---
+
+## Pembuatan Subtitle
+
+### File SRT disimpan tetapi memiliki nama yang salah atau di lokasi yang salah
+
+File SRT dan VTT disimpan di sebelah file sumber dengan kode bahasa yang ditambahkan saat bahasa sumber bukan bahasa Inggris:
+- Sumber bahasa Inggris: `namafile.srt`
+- Sumber bahasa Indonesia: `namafile.id.srt`
+- Dengan terjemahan bahasa Inggris: `namafile.id.srt` + `namafile.en.srt`
+
+Jika file muncul di sebelah WAV temp bukan sumber asli, periksa apakah file sumber memerlukan konversi format (format apa pun selain mp3/wav melalui FFmpeg). Logika tujuan output menggunakan `file_path` asli, bukan jalur file temp.
+
+### Output VTT untuk penggunaan web — bagaimana cara memuatnya di pemutar desktop?
+
+VLC mendukung VTT melalui Subtitle → Tambahkan File Subtitle → pilih file `.vtt`. Sebagian besar pemutar desktop lainnya mendukung SRT lebih baik dari VTT. Gunakan `output_format=srt` untuk kompatibilitas pemutar desktop maksimum.
+
+VTT paling cocok untuk elemen `<video>` HTML5 dan pemutar video berbasis web.
+
+### File LRC tidak ditampilkan di pemutar media saya
+
+File LRC (`.lrc`) diperuntukkan bagi pemutar dengan fitur tampilan lirik/karaoke: foobar2000, Winamp, AIMP, dan berbagai pemutar mobile. Pemutar video standar tidak menampilkan LRC. Jika Anda membutuhkan subtitle tersinkronisasi untuk video, gunakan `srt` atau `vtt`.
+
+### Output CSV — apa formatnya?
+
+Output CSV menyertakan waktu mulai segmen, waktu selesai, dan teks per baris. Dirancang untuk diimpor ke alat spreadsheet atau skrip analisis downstream. Format kolom yang tepat sesuai dengan output `-ocsv` whisper.cpp. Gunakan `srt` atau `vtt` untuk tampilan subtitle yang sebenarnya.
+
+### Pembuatan subtitle timeout dengan error 4 menit
+
+`generate_subtitles` berjalan secara sinkron secara default dan dapat mencapai timeout MCP 4 menit Claude Desktop pada file yang panjang. Gunakan `background=true` untuk file di atas 10 menit:
+
+- *"Buat subtitle untuk file ini, background=true"*
+
+Kemudian periksa kemajuan dengan `check_progress`. Catatan: `translate_to_english=true` tidak tersedia dalam mode latar belakang. Jalankan pass kedua setelah tugas latar belakang selesai untuk menghasilkan terjemahan.
+
+---
+
+## Manajemen Model
+
+### `download_model` gagal dengan error jaringan
+
+Alat mengunduh dari Hugging Face. Konfirmasi mesin Anda memiliki akses internet dan `huggingface.co` tidak diblokir oleh firewall atau proxy.
+
+Jika unduhan dimulai tetapi gagal di tengah jalan, file `.part` dihapus secara otomatis. Jalankan ulang `download_model` untuk mencoba lagi.
+
+### `switch_model` mengatakan model tidak ada di direktori model
+
+Alat `switch_model` hanya menerima file dalam direktori yang dikonfigurasi dalam `WHISPER_MODEL` (khususnya, direktori yang berisi file tersebut).
+
+Jika model Anda berada di lokasi yang berbeda, pindahkan ke direktori model atau perbarui `WHISPER_MODEL` di konfigurasi Anda agar menunjuk ke file di direktori yang sama dengan model Anda.
+
+### Model aktif kembali ke model konfigurasi setelah restart Claude Desktop
+
+`switch_model` bersifat session-scoped berdasarkan desain. Untuk membuat pergantian model permanen, perbarui `WHISPER_MODEL` di `claude_desktop_config.json` dan restart Claude Desktop.
+
+---
+
+## Jalur File dan Format
+
+### Nama file Unicode menyebabkan transkripsi gagal secara diam-diam
+
+Transkripsi latar belakang merutekan semua output melalui jalur temp berbasis ID tugas ASCII yang disanitasi, yang menangani nama file Unicode dengan benar. Jika Anda melihat kegagalan dengan nama file Unicode dalam mode pemblokiran, periksa bahwa file itu sendiri dapat diakses:
 
 ```powershell
-# Contoh — unduh large-v3-turbo secara langsung
-Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" `
-  -OutFile "C:\whisper\models\ggml-large-v3-turbo.bin"
+Test-Path "C:\Users\NamaPengguna\Documents\Rekaman_Rapat.mp4"
 ```
 
-Kemudian gunakan `switch_model ggml-large-v3-turbo.bin` untuk mengaktifkannya.
+Seharusnya mengembalikan `True`. Jika jalur tidak dapat diakses oleh PowerShell, jalur tersebut juga tidak dapat diakses oleh server MCP.
 
----
+### File video tidak menghasilkan output atau error segera
 
-## `check_config` melaporkan whisper-cli.exe tidak ditemukan
-
-Jalur di konfigurasi tidak cocok dengan lokasi file yang sebenarnya.
-
-Verifikasi file ada:
-```
-dir C:\whisper\Release\whisper-cli.exe
-```
-
-Jika ada di tempat lain, perbarui `WHISPER_CLI_PATH` di konfigurasi Anda agar sesuai dengan jalur yang sebenarnya.
-
----
-
-## `check_config` melaporkan FFmpeg tidak ditemukan
-
-FFmpeg tidak terpasang atau tidak ada di PATH sistem Anda.
-
-Pasang via winget:
-```
-winget install ffmpeg
-```
-
-Atau unduh dari [ffmpeg.org](https://ffmpeg.org/download.html), ekstrak, dan tambahkan folder `bin` ke PATH sistem Anda.
-
-Setelah memasang, buka command prompt baru dan verifikasi:
+FFmpeg diperlukan untuk semua format video. Konfirmasi FFmpeg terpasang:
 ```
 ffmpeg -version
 ```
 
-Jika Anda memasang FFmpeg ke lokasi non-standar, atur variabel lingkungan `FFMPEG_PATH` di konfigurasi Claude Desktop:
-```json
-"env": {
-  "FFMPEG_PATH": "C:\\ffmpeg\\bin\\ffmpeg.exe"
-}
+Jika FFmpeg tidak ada di PATH, atur `FFMPEG_PATH` di konfigurasi Anda ke jalur lengkap `ffmpeg.exe`.
+
+Jika FFmpeg terpasang tetapi video tertentu gagal, mungkin file rusak atau varian codec yang tidak biasa. Coba konversi secara manual:
 ```
-
----
-
-## Output transkripsi penuh dengan tag `[FOREIGN]`
-
-**Penyebab:** Anda menggunakan model khusus bahasa Inggris (misalnya `ggml-medium.en.bin`) pada audio non-Inggris. Model khusus bahasa Inggris tidak dapat memproses bahasa lain dan menghasilkan `[FOREIGN]` sebagai placeholder untuk setiap segmen yang tidak dapat ditangani.
-
-**Solusi:** Unduh dan gunakan `ggml-large-v3.bin` — model multibahasa. Ini diperlukan untuk transkripsi non-Inggris, deteksi bahasa otomatis, atau terjemahan.
-
+ffmpeg -i input.mp4 -ar 16000 -ac 1 output.wav
 ```
-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
-```
+Kemudian transkripsi file WAV secara langsung.
 
-Simpan ke `C:\whisper\models\` dan perbarui konfigurasi:
-```json
-"WHISPER_MODEL": "C:\\whisper\\models\\ggml-large-v3.bin"
-```
+### Error "File terlalu besar"
 
-Atau ganti per-transkripsi menggunakan parameter `model` di `transcribe_audio` atau `generate_subtitles`.
+Alat menolak file di atas 10 GB. Ini adalah batas keamanan untuk mencegah penggunaan memori yang berlebihan. File yang mendekati ukuran ini harus dipecah sebelum transkripsi.
 
-> **Catatan:** Model khusus bahasa Inggris (`*.en.bin`) lebih cepat dan akurat untuk konten bahasa Inggris tetapi sama sekali tidak dapat menangani bahasa lain. Jika Anda bekerja dengan konten multibahasa, `large-v3` adalah model yang tepat terlepas dari hardware.
+### Penolakan jalur UNC
+
+Jalur yang dimulai dengan `\\server\share` (jalur UNC ke berbagi jaringan) ditolak oleh validator input. Pasang berbagi jaringan sebagai huruf drive (misalnya `Z:\`) dan gunakan jalur tersebut.
 
 ---
 
-## Transkripsi tidak menghasilkan output atau file kosong
+## Pembersihan File Sementara
 
-**Kemungkinan penyebab:**
-
-1. **Model salah untuk bahasa** — Model khusus bahasa Inggris (`*.en.bin`) tidak dapat mentranskrip bahasa lain. Gunakan `ggml-large-v3.bin` untuk konten multibahasa.
-
-2. **Kualitas audio terlalu rendah** — File dengan bitrate sangat rendah (misalnya rekaman ponsel `.3gp` lama menggunakan codec AMR-NB ~12kbps) mungkin berada di batas kemampuan whisper. Lingkungan yang bising (kebisingan latar belakang, gema, pembicara jauh) juga menantang. Coba `large-v3` yang lebih baik menangani audio yang terdegradasi.
-
-3. **File diam atau rusak** — Jalankan `analyze_media` pada file untuk memeriksa apakah FFprobe mendeteksi aliran audio yang valid.
-
-4. **Kegagalan konversi** — File mungkin tidak dikonversi ke WAV dengan benar. Coba konversi secara manual terlebih dahulu:
-```
-ffmpeg -i yourfile.3gp -ar 16000 -ac 1 output.wav
-```
-Kemudian transkripsi WAV secara langsung.
-
----
-
-## Tugas latar belakang gagal pada file dengan karakter khusus atau Unicode di nama file
-
-**Penyebab:** whisper-cli.exe tidak dapat menulis file output saat jalur mengandung karakter Unicode (bahasa Indonesia, Jepang, Korea, emoji, tanda kurung, dll.) atau karakter khusus tertentu.
-
-**Solusi sementara saat ini:** Ubah nama file agar hanya menggunakan karakter ASCII sebelum transkripsi, lalu ubah nama kembali jika diperlukan.
-
-```
-ren "nama_file_indonesia.mp4" "temp_transcribe.mp4"
-```
-
-**Status:** Ini adalah bug yang diketahui. Perbaikan direncanakan yang akan merutekan output melalui jalur temp yang disanitasi dan memindahkan hasilnya ke tujuan yang benar setelah selesai.
-
----
-
-## Tugas latar belakang menampilkan "gagal" tanpa output
-
-**Kemungkinan penyebab:**
-
-1. **Nama file Unicode** — Lihat di atas.
-
-2. **Jalur model salah** — Proses terpisah tidak mewarisi jalur yang telah dikoreksi. Jalankan `check_config` untuk memverifikasi jalur.
-
-3. **Proses dihentikan** — Jika whisper-cli.exe dihentikan secara manual di tengah tugas, tidak ada file output yang akan ada. Coba lagi.
-
-4. **VRAM tidak cukup** — Model besar pada GPU dengan VRAM rendah mungkin gagal secara diam-diam. Coba model yang lebih kecil.
-
-5. **Konversi file gagal** — Coba transkripsi file WAV langsung untuk mengisolasi apakah masalahnya ada di konversi atau transkripsi.
-
----
-
-## Transkripsi latar belakang tidak menghasilkan output SRT
-
-**Penyebab:** Mode latar belakang (`background=true` di `transcribe_audio`) saat ini hanya menghasilkan output `.txt`. Format SRT dalam mode latar belakang belum diimplementasikan.
-
-**Solusi:** Untuk file di bawah ~4 menit, gunakan `generate_subtitles` dalam mode pemblokiran. Untuk file yang lebih panjang, transkripsi dalam mode latar belakang terlebih dahulu untuk mendapatkan `.txt`, kemudian jika SRT diperlukan, gunakan `generate_subtitles` pada file yang sama (akan mentranskrip ulang).
-
-**Status:** Dukungan SRT dalam mode latar belakang direncanakan untuk rilis mendatang.
-
----
-
-## GPU tidak digunakan (CPU macet di atas 50%)
-
-**Penyebab:** Anda menjalankan binary khusus CPU yang disertakan dengan rilis whisper.cpp standar.
-
-**Solusi:** Unduh build yang mengaktifkan Vulkan dari [halaman rilis](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0) dan ekstrak ke `C:\whisper\Release\`.
-
-Verifikasi akselerasi GPU aktif:
-- Minta Claude `check_system`
-- Cari `✅ Vulkan binary: ggml-vulkan.dll found` dalam output
-- Pantau Task Manager → Performa → GPU selama transkripsi — utilisasi GPU seharusnya naik ke 15–30%
-
----
-
-## `check_system` melaporkan jumlah VRAM yang salah
-
-Ini adalah keterbatasan Windows yang diketahui. Perintah `wmic` membaca VRAM dari registry, yang pada banyak kartu AMD melaporkan setengah VRAM fisik. Vega 56 dengan 8GB HBM2 biasanya menampilkan 4GB. Ini hanya masalah tampilan — whisper menggunakan VRAM fisik penuh selama inferensi.
-
----
-
-## Error "Transkripsi sudah berlangsung"
-
-Ada proses `whisper-cli.exe` yang berjalan dari tugas sebelumnya. Tunggu hingga selesai, atau:
-
-1. Buka Task Manager → tab Detail
-2. Temukan `whisper-cli.exe`
-3. Klik kanan → Akhiri tugas
-
-Kemudian coba lagi.
-
----
-
-## Deteksi bahasa otomatis salah
-
-Deteksi otomatis Whisper berjalan pada 30 detik pertama audio. Jika file dimulai dalam bahasa yang berbeda dari sebagian besar kontennya, deteksi mungkin salah.
-
-**Solusi:** Tentukan bahasa secara eksplisit (misalnya `language=id`) daripada mengandalkan deteksi otomatis.
-
----
-
-## Pembuatan subtitle menghasilkan "(berbicara dalam bahasa asing)" di seluruh bagian
-
-Whisper mendeteksi ucapan tetapi tidak dapat mentranskrip. Penyebab paling umum:
-
-1. **Model salah** — Menggunakan model khusus bahasa Inggris pada audio non-Inggris. Gunakan `large-v3`.
-
-2. **Kualitas audio** — Lingkungan yang bising (dapur, kerumunan, gema) mungkin mengalahkan model medium. Coba `large-v3`.
-
-3. **Bahasa campuran** — File dengan dua bahasa yang bergantian akan membuat bahasa minoritas diisi placeholder dengan pengaturan satu bahasa.
-
----
-
-## Terjemahan subtitle hanya menghasilkan bahasa Inggris
-
-Ini adalah desain yang disengaja. Flag `--translate` bawaan Whisper hanya menerjemahkan **ke bahasa Inggris**. Untuk terjemahan ke bahasa target lain, terjemahkan konten file `.srt` secara terpisah.
-
----
-
-## Transkripsi batch berhenti maju
-
-Panggil `check_batch_progress` lagi. Jika masih macet:
-
-1. Periksa Task Manager untuk proses `whisper-cli.exe` yang berjalan
-2. Periksa log tugas di `%TEMP%\whisper-mcp-jobs\`
-3. File yang gagal ditandai dalam laporan batch — jalankan ulang secara individual dengan `transcribe_audio`
-
----
-
-## Membersihkan direktori tugas sementara
-
-whisper-windows-mcp menulis file status tugas dan log ke `%TEMP%\whisper-mcp-jobs\` selama transkripsi. File-file ini terakumulasi dari waktu ke waktu dan dapat menghabiskan ruang disk, terutama file `.log` dari tugas transkripsi yang panjang.
-
-Setelah batch atau tugas selesai dan Anda telah memverifikasi transkrip output, Anda dapat dengan aman menghapus semua yang ada di direktori ini:
+File status tugas (`.json` dan `.log`) di `%TEMP%\whisper-mcp-jobs\` dibersihkan secara otomatis saat startup untuk file yang lebih dari 7 hari. Pembersihan manual tetap dimungkinkan jika diperlukan:
 
 ```powershell
-Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Recurse -Force
+Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Force
 ```
 
-Direktori akan dibuat ulang secara otomatis pada transkripsi berikutnya. Tidak ada file output transkrip yang disimpan secara permanen di sini — file dipindahkan ke direktori sumber saat selesai. Hanya metadata tugas dan log yang tersisa.
-
-**Catatan:** Jangan hapus direktori ini saat transkripsi sedang berlangsung — file status batch diperlukan agar `check_batch_progress` berfungsi.
-
----
-
-## Batch besar tanpa pengawasan dari command line
-
-Untuk batch yang sangat besar di mana Anda ingin menjalankan semalaman tanpa Claude, gunakan PowerShell.
-
-**Penting:** whisper-cli.exe tidak dapat membaca MP4, MKV, atau sebagian besar format video secara langsung. FFmpeg harus mengkonversi setiap file ke WAV terlebih dahulu. whisper juga menulis transkrip ke stdout dan output diagnostik ke stderr — gunakan `Start-Process -RedirectStandardOutput` untuk menangkap transkrip dengan benar. Menggunakan pipe `|` atau mengalihkan stderr dengan `2>$null` tidak menangkap apa pun.
+File WAV konversi sementara (`whisper_tmp_*.wav` di `%TEMP%`) dihapus segera setelah setiap transkripsi selesai. Jika transkripsi crash di tengah jalan, file-file ini mungkin tertinggal. Hapus secara manual:
 
 ```powershell
-$whisper = "C:\whisper\Release\whisper-cli.exe"
-$model   = "C:\whisper\models\ggml-medium.en.bin"
-$dir     = "C:\path\to\your\folder"
-$ffmpeg  = "ffmpeg"
-$tmp     = "$env:TEMP\whisper_convert.wav"
-
-Get-ChildItem "$dir\*.mp4" | ForEach-Object {
-    $out = ($_.FullName -replace '\.mp4$', '') + ".txt"
-    if (Test-Path $out) {
-        Write-Host "SKIP (exists): $($_.Name)"
-        return
-    }
-    Write-Host "Converting:    $($_.Name)"
-    & $ffmpeg -y -i $_.FullName -ar 16000 -ac 1 -c:a pcm_s16le $tmp 2>$null
-    Write-Host "Transcribing:  $($_.Name)"
-    $wArgs = "-m `"$model`" -f `"$tmp`" --threads 8 --condition-on-previous-text 0 --no-speech-thold 0.6"
-    Start-Process -FilePath $whisper -ArgumentList $wArgs -RedirectStandardOutput $out -Wait -NoNewWindow
-    Write-Host "Done:          $($_.BaseName).txt"
-}
-
-Remove-Item $tmp -ErrorAction SilentlyContinue
-Write-Host "All done."
+Remove-Item "$env:TEMP\whisper_tmp_*.wav" -Force
 ```
-
-Ganti `*.mp4` dengan `*.mkv`, `*.m4a`, dll. sesuai jenis file Anda. Pemeriksaan lewati `Test-Path` berarti menjalankan ulang skrip setelah gangguan tidak akan memproses ulang file yang sudah selesai.
-
-Script ini menulis file `.txt` di sebelah setiap sumber. Alat MCP akan mengenali file-file ini sebagai sudah ditranskripsi saat Anda menjalankan `analyze_media` atau `start_batch` setelahnya.
-
----
-
-## Lokasi file konfigurasi
-
-```
-C:\Users\NamaPengguna\AppData\Roaming\Claude\claude_desktop_config.json
-```
-
-Jika `AppData` tidak terlihat: Tampilan → Tampilkan → Item tersembunyi di File Explorer.
-
----
-
-## Contoh konfigurasi lengkap yang berfungsi
-
-```json
-{
-  "mcpServers": {
-    "whisper": {
-      "command": "npx",
-      "args": ["-y", "whisper-windows-mcp"],
-      "env": {
-        "WHISPER_CLI_PATH": "C:\\whisper\\Release\\whisper-cli.exe",
-        "WHISPER_MODEL": "C:\\whisper\\models\\ggml-medium.en.bin",
-        "FFMPEG_PATH": "ffmpeg"
-      }
-    }
-  }
-}
-```
-
-`FFMPEG_PATH` default ke `ffmpeg` (mengasumsikan ada di PATH). Atur secara eksplisit hanya jika FFmpeg dipasang di lokasi non-standar.

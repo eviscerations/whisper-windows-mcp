@@ -120,7 +120,7 @@ O anula por transcripción usando el parámetro `model` en `transcribe_audio` o 
 
 1. **Modelo incorrecto para el idioma** — Los modelos solo inglés (`*.en.bin`) no pueden transcribir otros idiomas. Usa `ggml-large-v3.bin` para contenido multilingüe.
 
-2. **Calidad de audio muy baja** — Los archivos con tasa de bits muy baja (ej.: grabaciones antiguas de celular `.3gp` usando códec AMR-NB a ~12kbps) pueden estar en el límite de lo que whisper puede procesar. Los entornos ruidosos (ruido de fondo, eco, hablantes distantes) también son desafiantes. Prueba `large-v3`, que maneja mejor el audio degradado.
+2. **Calidad de audio muy baja** — Los archivos con tasa de bits muy baja (ej.: grabaciones antiguas de celular `.3gp` usando códec AMR-NB a ~12kbps) pueden estar en el límite de lo que whisper puede procesar. Los entornos ruidosos (ruido de fondo, eco, hablantes distantes) también son desafiantes. Prueba `large-v3`, que maneja mejor el audio degradado que los modelos más pequeños.
 
 3. **Archivo silencioso o corrupto** — Ejecuta `analyze_media` en el archivo para verificar si FFprobe detecta un flujo de audio válido.
 
@@ -136,13 +136,13 @@ Luego transcribe el WAV directamente.
 
 **Causa:** whisper-cli.exe no puede escribir el archivo de salida cuando la ruta contiene caracteres Unicode (español, japonés, chino, emoji, corchetes, etc.) o ciertos caracteres especiales.
 
-**Solución alternativa actual:** Renombra el archivo para usar solo caracteres ASCII antes de transcribir, luego renombra de vuelta si es necesario.
+**Corregido en v2.0.0.** Si estás ejecutando la versión actual, este problema no debería ocurrir. Si sigue ocurriendo, actualiza con `npm install -g whisper-windows-mcp` y reinicia Claude Desktop.
+
+Si usas una versión anterior, la solución alternativa es renombrar el archivo para usar solo caracteres ASCII antes de transcribir, luego renombra de vuelta si es necesario.
 
 ```
 ren "archivo_español.mp4" "temp_transcribe.mp4"
 ```
-
-**Estado:** Este es un bug conocido. Hay una corrección planificada que enrutará la salida a través de una ruta temporal saneada y moverá el resultado al destino correcto tras completarse.
 
 ---
 
@@ -150,25 +150,13 @@ ren "archivo_español.mp4" "temp_transcribe.mp4"
 
 **Posibles causas:**
 
-1. **Nombre de archivo Unicode** — Ver arriba.
+1. **Ruta del modelo incorrecta** — El proceso separado no hereda las rutas corregidas. Ejecuta `check_config` para verificar las rutas.
 
-2. **Ruta del modelo incorrecta** — El proceso separado no hereda las rutas corregidas. Ejecuta `check_config` para verificar las rutas.
+2. **Proceso fue terminado** — Si whisper-cli.exe fue terminado manualmente a mitad de una tarea, no existirá ningún archivo de salida. Vuelve a intentarlo.
 
-3. **Proceso fue terminado** — Si whisper-cli.exe fue terminado manualmente a mitad de una tarea, no existirá ningún archivo de salida. Vuelve a intentarlo.
+3. **VRAM insuficiente** — Los modelos grandes en GPUs con poca VRAM pueden fallar silenciosamente. Prueba un modelo más pequeño.
 
-4. **VRAM insuficiente** — Los modelos grandes en GPUs con poca VRAM pueden fallar silenciosamente. Prueba un modelo más pequeño.
-
-5. **Fallo en la conversión del archivo** — Intenta transcribir un archivo WAV directamente para aislar si el problema está en la conversión o en la transcripción.
-
----
-
-## La transcripción en segundo plano no produce salida SRT
-
-**Causa:** El modo en segundo plano (`background=true` en `transcribe_audio`) actualmente solo produce salida `.txt`. El formato SRT en modo en segundo plano aún no ha sido implementado.
-
-**Solución alternativa:** Para archivos de menos de ~4 minutos, usa `generate_subtitles` en modo de bloqueo. Para archivos más largos, transcribe primero en modo en segundo plano para obtener el `.txt`, luego si necesitas el SRT, usa `generate_subtitles` en el mismo archivo (volverá a transcribir).
-
-**Estado:** El soporte de SRT en modo en segundo plano está planificado para un release futuro.
+4. **Fallo en la conversión del archivo** — Intenta transcribir un archivo WAV directamente para aislar si el problema está en la conversión o en la transcripción.
 
 ---
 
@@ -241,9 +229,7 @@ Llama a `check_batch_progress` nuevamente. Si sigue atascado:
 
 ## Limpiar el directorio temporal de tareas
 
-whisper-windows-mcp escribe archivos de estado de tareas y logs en `%TEMP%\whisper-mcp-jobs\` durante la transcripción. Estos se acumulan con el tiempo y pueden consumir espacio en disco, especialmente los archivos `.log` de tareas de transcripción largas.
-
-Una vez que un lote o tarea esté completo y hayas verificado las transcripciones de salida, puedes eliminar de forma segura todo en este directorio:
+whisper-windows-mcp escribe archivos de estado de tareas y logs en `%TEMP%\whisper-mcp-jobs\` durante la transcripción. El servidor limpia automáticamente los archivos con más de 7 días de antigüedad al arrancar. Para limpiar manualmente, una vez que un lote o tarea esté completo y hayas verificado las transcripciones de salida, puedes eliminar de forma segura todo en este directorio:
 
 ```powershell
 Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Recurse -Force

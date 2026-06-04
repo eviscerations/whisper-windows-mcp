@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Lộ trình phát triển
 
-Phiên bản hiện tại: **v2.2.0**
+Phiên bản hiện tại: **v2.3.0**
 
 ---
 
@@ -54,143 +54,109 @@ Kiến trúc tiến trình tách rời: `transcribe_audio` với `background=tru
 ### ✅ v2.0.0 — Đường dẫn an toàn Unicode + SRT nền
 **Tên tệp Unicode:** Tệp có ký tự không phải ASCII trong tên tệp gây ra phiên âm nền thất bại lặng lẽ. Đã sửa bằng cách định tuyến tất cả đầu ra qua đường dẫn tạm thời đã làm sạch dựa trên ID tác vụ, sau đó di chuyển kết quả đến đích chính xác sau khi hoàn thành.
 
-**SRT trong chế độ nền:** `spawnDetached` trước đây mã cứng `-otxt` bất kể định dạng được yêu cầu, và `generate_subtitles` chặn đồng bộ và bị timeout MCP 4 phút với tệp dài hơn. Đã sửa bằng cách thêm tham số `outputFormat` vào `spawnDetached`, hỗ trợ đầu ra `text` và `srt` trong chế độ nền.
+**SRT trong chế độ nền:** `spawnDetached` trước đây mã cứng `-otxt` bất kể định dạng được yêu cầu. Đã sửa bằng cách thêm tham số `outputFormat` vào `spawnDetached`, hỗ trợ đầu ra `text` và `srt` trong chế độ nền.
 
 ### ✅ v2.0.1 — Sửa lỗi (đã gộp vào v2.2.0)
-- Mã cứng `--max-context 0` trong cả `buildArgs` và `spawnDetached` — ngăn vòng lặp ảo giác trên âm thanh dài. `--condition-on-previous-text` và `--no-context` không phải flag hợp lệ trong tệp nhị phân hiện tại (thế hệ v1.8.3) — `--max-context N` là flag đúng.
+- Mã cứng `--max-context 0` trong cả `buildArgs` và `spawnDetached` — ngăn vòng lặp ảo giác trên âm thanh dài.
 - Mã cứng `--no-speech-thold 0.6` trong cả hai hàm — xử lý các đoạn dưới ngưỡng tin cậy là im lặng thay vì nội dung ảo giác.
 - Xác thực đường dẫn (`validateInputPath`) — từ chối đường dẫn UNC và duyệt `..`.
 - Bảo vệ kích thước tệp `MAX_FILE_SIZE_MB = 10240`.
 - Chú thích bảo mật tiêm nhiễm phiên âm trong `transcribeSingle`.
-- Sửa lệnh CLI batch bị hỏng trong TROUBLESHOOTING.md — ghi lại phương pháp chuyển đổi FFmpeg đúng và cách dùng `Start-Process -RedirectStandardOutput`.
+- Sửa lệnh CLI batch bị hỏng trong TROUBLESHOOTING.md.
 
 ### ✅ v2.1.0 — Bộ quản lý mô hình (đã gộp vào v2.2.0)
 - Thay đổi `WHISPER_MODEL` từ `const` sang `let` (có thể thay đổi trong phiên).
 - `MODEL_REGISTRY` — 16 mô hình, biến thể độ chính xác đầy đủ và lượng tử hóa, URL tải xuống Hugging Face.
 - `ALLOWED_HF_PREFIXES` — danh sách URL cho phép giới hạn tải xuống vào namespace `ggerganov/whisper.cpp` và `ggml-org`.
 - Công cụ `list_models` — quét thư mục mô hình, hiển thị mô hình đang hoạt động, kích thước, trường hợp sử dụng, các tải xuống có sẵn.
-- Công cụ `download_model` — tải xuống từ Hugging Face qua `https` tích hợp sẵn của Node.js, đổi tên nguyên tử (sửa race condition giải phóng file handle Windows).
+- Công cụ `download_model` — tải xuống từ Hugging Face qua `https` tích hợp sẵn của Node.js, đổi tên nguyên tử.
 - Công cụ `switch_model` — xác thực phần mở rộng `.bin`, ràng buộc thư mục, kiểm tra khóa tiến trình.
 - Cập nhật `recommendedModel()` để đề xuất `large-v3-turbo` cho VRAM 6GB+.
 
-### ✅ v2.2.0 — Mở rộng chất lượng, tham số và phần cứng (hiện tại)
+### ✅ v2.2.0 — Mở rộng chất lượng, tham số và phần cứng
 - Interface `WhisperOptions` thay thế đối số vị trí trong `buildArgs`.
 - Tham số mới trong `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - Tham số mới trong `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
 - Tái cấu trúc `spawnDetached` — tất cả flag chất lượng giờ được áp dụng trong chế độ nền/đợt.
-- Cập nhật `runSrtPass` để chấp nhận `extraOpts`.
-- Sửa đầu ra đợt — `readBatchProgress` giờ di chuyển đầu ra tạm thời đến đích cuối cùng trước khi xác nhận (nguyên nhân gốc của tất cả kết quả "thất bại" trong đợt).
+- Sửa đầu ra đợt — `readBatchProgress` giờ di chuyển đầu ra tạm thời đến đích cuối cùng trước khi xác nhận.
 
-**Lưu ý tương thích flag:** `gpu_device` / `-g` được thêm trong whisper.cpp v1.8.4. Tệp nhị phân Vulkan đã biên dịch sẵn trong các bản phát hành là thế hệ v1.8.3 — tham số này được công cụ chấp nhận nhưng sẽ không có hiệu lực cho đến khi người dùng cập nhật lên tệp nhị phân v1.8.4+.
+**Lưu ý tương thích flag:** `gpu_device` / `--device` được thêm trong whisper.cpp v1.8.4. Tệp nhị phân Vulkan đã biên dịch sẵn trong các bản phát hành là thế hệ v1.8.3 — tham số này được công cụ chấp nhận nhưng sẽ không có hiệu lực cho đến khi người dùng cập nhật lên tệp nhị phân v1.8.4+.
 
-**Flag hợp lệ đã xác nhận trong tệp nhị phân hiện tại (thế hệ v1.8.3):**
-`--max-context`, `--no-speech-thold`, `--processors`, `--offset-t`, `--duration`, `--best-of`, `--beam-size`, `--diarize`, `--tinydiarize`, `--temperature`, `--prompt`, flag VAD.
+### ✅ v2.2.2 — Bản vá
+- Sửa cấp phép kép — chỉnh sửa LICENSE và LICENSE-COMMERCIAL.md.
+- Sửa lỗi tài liệu nhỏ.
 
-**Không có trong tệp nhị phân hiện tại:** `--no-context` (dùng `--max-context 0`), `--condition-on-previous-text` (chỉ là tên Python API), `--gpu-device` / `-g` (v1.8.4+).
+### ✅ v2.3.0 — Tự động tiến đợt, kiến trúc quyền riêng tư, mở rộng định dạng đầu ra
 
----
+**Tự động tiến đợt (sửa lỗi nghiêm trọng):** `start_batch` trước đây yêu cầu polling tích cực để tiến queue. Giờ mỗi tiến trình con whisper-cli được tạo ra đều có handler `on('exit')` được gắn vào. Khi tiến trình thoát, đợt ngay lập tức tự động tiến qua exit callback — không tốn chi phí polling và API. Mutex ngăn tạo kép giữa exit handler + lệnh gọi `check_batch_progress` đồng thời.
 
-## Lỗi nghiêm trọng — Tự động tiến đợt (đã xác nhận, chờ sửa)
+**Kiến trúc quyền riêng tư:**
+- Biến môi trường `WHISPER_PRIVACY_MODE` — khi đặt thành `true`, tất cả phản hồi công cụ chỉ trả về siêu dữ liệu (tên tệp, số từ, đường dẫn lưu). Không có văn bản phiên âm nào được gửi đến API của Claude. Bản phiên âm chỉ tồn tại dưới dạng tệp cục bộ.
+- Biến môi trường `WHISPER_CONSENT_ACKNOWLEDGED` — khi đặt thành `true`, bỏ qua cổng đồng ý phiên một lần cho nội dung không nhạy cảm.
+- Tham số `privacy_mode` theo từng lệnh gọi trong `transcribe_audio`, `transcribe_batch`, `start_batch`, `check_progress`. Ghi đè biến môi trường toàn cục theo cả hai hướng. Không cần khởi động lại để bật/tắt.
+- Cổng chế độ quyền riêng tư (`checkPrivacyGate()`) — chạy trước mỗi thao tác khi chế độ quyền riêng tư hiệu quả đang hoạt động. Kích hoạt lần đầu gọi (hiển thị công khai), giải phóng lần gọi thứ hai (cho phép). Đặt lại sau mỗi thao tác. Hoàn toàn độc lập với cổng đồng ý phiên.
+- Cổng đồng ý phiên (`transcriptPolicy()`) — chạy một lần mỗi phiên trước lệnh gọi trả về phiên âm đầu tiên ở chế độ tiêu chuẩn. Tiêu thụ bằng flag `sessionConsentGiven`.
+- `PRIVACY.md` — tài liệu tuân thủ đầy đủ bao gồm HIPAA, GDPR, đặc quyền luật sư-khách hàng, FERPA, SOX, PCI-DSS, NDA/bí mật thương mại.
+- Cảnh báo quyền riêng tư trong mô tả công cụ của tất cả công cụ trả về văn bản phiên âm.
 
-### Đợt không tự động tiến khi không có polling tích cực
+**Mở rộng định dạng đầu ra:**
+- `vtt` — đầu ra phụ đề WebVTT qua `-ovtt`. Có sẵn trong `transcribe_audio`, `generate_subtitles`, `start_batch` và chế độ nền.
+- `lrc` — định dạng lời bài hát/karaoke LRC qua `-olrc`. Có sẵn trong `transcribe_audio` và chế độ nền.
+- `csv` — CSV có dấu thời gian qua `-ocsv`. Có sẵn trong `transcribe_audio` và chế độ nền.
+- Giá trị mặc định `output_format` thay đổi từ `"text"` sang `"timestamps"` trên tất cả công cụ và đường dẫn mã. Văn bản thuần túy giờ là tùy chọn.
 
-`start_batch` không tự chủ tiến queue giữa các tệp. Đợt chỉ tiến khi `check_batch_progress` được gọi. Không có polling, đợt dừng vô thời hạn sau mỗi tệp — whisper-cli.exe thoát, không có tiến trình mới được tạo, queue không tiến.
+**Sửa lỗi:**
+- Lỗi 1: `output_format` không được truyền đến tác vụ nền — mặc định `"text"` được dùng bất kể định dạng được yêu cầu. Đã sửa bằng cách thay đổi mặc định thành `"timestamps"` và truyền đúng cách.
+- Lỗi 2: `catch {}` im lặng trên thao tác di chuyển đầu ra tác vụ nền nuốt lỗi thất bại. Thêm kiểm tra `existsSync` rõ ràng sau khi di chuyển với thông báo thất bại chi tiết.
+- Lỗi 3: Thêm chú thích thiết kế tại điểm tạo nền giải thích tại sao cổng đồng ý được trì hoãn có chủ ý đến `check_progress` cho tác vụ nền không riêng tư.
 
-Điều này phá vỡ mục tiêu thiết kế cốt lõi là xử lý hàng loạt qua đêm không giám sát, và trực tiếp vi phạm nguyên tắc thiết kế giảm thiểu lệnh gọi Claude API. Một đợt 95 tệp clip ngắn yêu cầu khoảng 200 lệnh gọi polling trong 100 phút để hoàn thành.
-
-**Nguyên nhân gốc:** `readBatchProgress` chứa tất cả logic tiến queue. Nó chỉ thực thi khi `check_batch_progress` được gọi rõ ràng. Không có bộ đếm thời gian nền, trình theo dõi tệp hay vòng lặp tự chủ.
-
-**Sửa đã lên kế hoạch — Tùy chọn B (exit callback, mạnh mẽ khuyến nghị):** Gắn handler `on('exit')` vào tiến trình con whisper-cli đã tạo. Khi tiến trình thoát, ngay lập tức gọi logic tiến để xác nhận đầu ra và tạo tác vụ tiếp theo. Dựa trên sự kiện, kích hoạt chính xác một lần mỗi lần hoàn thành tệp, không tốn chi phí polling và API.
-
-**Tùy chọn A (chỉ dự phòng):** `setInterval` nền với khoảng polling dựa trên thời lượng được suy ra từ dữ liệu thời lượng FFprobe đã có trong JSON trạng thái đợt. Kích thước tệp không phải là đại diện đáng tin cậy cho thời lượng.
-
-**Ràng buộc bổ sung:** Bản sửa không được tạo whisper-cli.exe thứ hai khi đã có một tiến trình đang chạy — khóa tiến trình phải được tôn trọng trong đường dẫn tự động tiến.
-
-**Giải pháp tạm thời (hiện tại):** Gọi `check_batch_progress` lặp lại cho đến khi đợt hoàn thành. Cần khoảng một lần polling mỗi tệp.
-
----
-
-## Đã lên kế hoạch — Kiến trúc quyền riêng tư (trước khi chuyển đổi Bun)
-
-Những thay đổi này phải được phát hành trước khi chuyển đổi Bun và trước bất kỳ thay đổi giấy phép nào tạo điều kiện cho việc áp dụng thương mại hoặc doanh nghiệp. Phát hành công cụ cấp doanh nghiệp mà không có các biện pháp bảo vệ tuân thủ đã được giải quyết tạo ra trách nhiệm pháp lý cho người dùng trong các ngành được quản lý.
-
-### Biến môi trường `WHISPER_PRIVACY_MODE`
-Công cụ hiện đảm bảo không có **âm thanh** nào rời khỏi máy. Nó không mở rộng đảm bảo này cho **văn bản phiên âm** — khi nội dung phiên âm được trả về trong phản hồi công cụ, văn bản đó được xử lý bởi API của Claude và rời khỏi môi trường cục bộ.
-
-Khoảng cách này vô hình với người dùng hợp lý hiểu "không có dữ liệu nào rời khỏi máy" bao gồm tất cả nội dung được tạo ra từ âm thanh của họ.
-
-Thêm `WHISPER_PRIVACY_MODE` như biến môi trường trong `claude_desktop_config.json`. Khi được bật:
-- Tất cả phản hồi công cụ chỉ trả về siêu dữ liệu: tên tệp, thời lượng, số từ, trạng thái hoàn thành
-- Không có văn bản phiên âm nào được bao gồm trong bất kỳ phản hồi công cụ nào
-- Claude không thể đọc, phân tích hoặc chuyển tiếp nội dung phiên âm dưới bất kỳ hình thức nào
-- Bản phiên âm chỉ tồn tại dưới dạng tệp `.txt` cục bộ
-
-Đây là giải pháp đúng cho triển khai y tế, pháp lý, tài chính và doanh nghiệp. Không lệnh gọi API, không truyền dữ liệu, không rủi ro tuân thủ.
-
-### Cổng đồng ý cho nội dung phiên âm
-Khi `WHISPER_PRIVACY_MODE` không được bật (mặc định), bất kỳ phản hồi công cụ nào bao gồm văn bản phiên âm phải có thông báo tiết lộ ở lần sử dụng đầu tiên trong mỗi phiên. Thông báo tiết lộ phải truyền đạt rõ ràng rằng văn bản phiên âm được truyền đến API của Anthropic, rằng điều này nằm ngoài đảm bảo "không có dữ liệu nào rời khỏi máy", và rằng người dùng xử lý nội dung được quản lý phải xác nhận nghĩa vụ tuân thủ trước khi tiếp tục.
-
-Triển khai: biến môi trường `WHISPER_CONSENT_ACKNOWLEDGED` mặc định là `false`. Ở lần trả về phiên âm đầu tiên trong phiên, nếu chưa được xác nhận, Claude trình bày thông báo tiết lộ và yêu cầu xác nhận rõ ràng. Sau khi được xác nhận trong phiên, các bản phiên âm tiếp theo được trả về mà không cần nhắc lại.
-
-### Tài liệu `PRIVACY.md`
-Tạo `PRIVACY.md` trong thư mục gốc repo bao gồm:
-- Dữ liệu luôn ở cục bộ: tệp âm thanh, video, mô hình
-- Dữ liệu có thể rời khỏi cục bộ (mặc định): văn bản phiên âm trong phản hồi công cụ
-- Dữ liệu không bao giờ rời khỏi cục bộ (với chế độ riêng tư): tất cả
-- Hướng dẫn khung tuân thủ theo ngành (HIPAA, GDPR, đặc quyền luật sư-khách hàng, FERPA, SOX, PCI-DSS, NDA/bí mật thương mại)
-- Cách cấu hình chế độ riêng tư
-- Tuyên bố miễn trách nhiệm rằng tác giả công cụ không phải là cố vấn pháp lý
-
-### Cảnh báo riêng tư trong schema công cụ
-Cập nhật mô tả công cụ `ListToolsRequestSchema` để bao gồm ghi chú riêng tư trên bất kỳ công cụ nào trả về văn bản phiên âm. Điều này hiển thị trong mô tả công cụ của Claude Desktop và tạo nhận thức tại điểm sử dụng.
-
-### Tự động dọn dẹp thư mục tạm thời
-`%TEMP%\whisper-mcp-jobs\` tích lũy tệp trạng thái tác vụ và nhật ký theo thời gian. Thêm tự động dọn dẹp tệp tác vụ hoàn thành sau khoảng thời gian lưu giữ có thể cấu hình (mặc định: 7 ngày). Hiện tại yêu cầu người dùng chạy `Remove-Item` thủ công.
+**Bổ sung:**
+- Tự động dọn dẹp thư mục tạm thời — `cleanupOldJobFiles()` chạy khi khởi động xóa tệp `.json` và `.log` cũ hơn 7 ngày trong `%TEMP%\whisper-mcp-jobs\`.
+- `check_config` giờ báo cáo trạng thái chế độ quyền riêng tư.
+- Báo cáo bật/tắt chế độ quyền riêng tư trong nhật ký khởi động.
+- Trường `privacyMode: boolean` được thêm vào interface `Job`.
+- Trường `privacyMode: boolean` được thêm vào interface `BatchState`.
+- Kiểu `BackgroundFormat` loại trừ `json` (json trong chế độ nền không được hỗ trợ — dự phòng về `text`).
 
 ---
 
-## Đã lên kế hoạch — Chuyển đổi Bun
+## Đã lên kế hoạch — v2.4.0: Chuyển đổi Bun
 
-Chuyển đổi runtime từ Node.js sang [Bun](https://bun.sh) sau khi kiến trúc quyền riêng tư hoàn thành và trước khi thêm tính năng v2.3.0.
+Chuyển đổi runtime từ Node.js sang [Bun](https://bun.sh).
 
-Vì Claude Desktop tạo máy chủ MCP mới khi khởi động mỗi phiên, thời gian khởi động nằm trên đường dẫn quan trọng. Bun chạy TypeScript gốc không cần bước biên dịch, khởi động nhanh hơn đáng kể so với Node và có I/O nhanh hơn.
+Claude Desktop tạo máy chủ MCP mới vào mỗi lần khởi động phiên, vì vậy thời gian khởi động nằm trên đường dẫn quan trọng. Bun chạy TypeScript gốc mà không cần bước biên dịch, khởi động nhanh hơn đáng kể so với Node và I/O cũng nhanh hơn.
 
 **Những gì thay đổi:**
-- Loại bỏ bước build `tsc` và thư mục `dist/`
-- Người dùng chạy trực tiếp source TypeScript
+- Bước biên dịch `tsc` và thư mục `dist/` bị xóa
+- Người dùng chạy mã nguồn TypeScript trực tiếp
 - `tsconfig.json` trở thành tùy chọn
 - Cập nhật script `package.json`
-- Cập nhật quy trình publish npm
+- Cập nhật quy trình phát hành npm
 
 **Những gì không thay đổi:**
-- Source code `src/index.ts` — Bun tương thích với TypeScript hiện có và API tích hợp sẵn của Node.js
+- Mã nguồn `src/index.ts` — Bun tương thích với TypeScript hiện tại và các API tích hợp sẵn của Node.js
 - Tất cả hành vi công cụ và định dạng đầu ra
 - Cấu hình Claude Desktop cho người dùng cuối
 
-**Tại sao sau riêng tư, trước v2.3.0:** Codebase ở trạng thái dễ chuyển đổi nhất ngay bây giờ. Chuyển đổi sau khi thêm công cụ chỉ tăng khối lượng công việc mà không có lợi ích. Kiến trúc quyền riêng tư phải ra mắt trước như đã lưu ý ở trên.
+---
+
+## Đã lên kế hoạch — v2.5.0: Định dạng đầu ra nâng cao cho tích hợp công cụ bên ngoài
+
+Hỗ trợ định dạng đầu ra mở rộng nhắm đến quy trình phân tích và tích hợp downstream. Phạm vi chính xác sẽ được xác định dựa trên phản hồi của người dùng sau v2.3.0.
 
 ---
 
-## Giấy phép
+## Đã lên kế hoạch — v2.6.0: Chế độ phiên âm microphone trực tiếp
 
-whisper-windows-mcp được cấp phép kép.
+Phiên âm theo thời gian thực từ đầu vào microphone trực tiếp. Phát trực tuyến âm thanh theo từng đoạn từ thiết bị ghi âm được chọn đến whisper, trả về các đoạn phiên âm đã hoàn thành theo cách cuộn.
 
-**Sử dụng phi thương mại:** MIT — miễn phí cho mục đích cá nhân, giáo dục và phi thương mại. Xem [LICENSE](LICENSE).
+**Ràng buộc thiết kế:**
+- Lựa chọn thiết bị phải rõ ràng — không tự động thu microphone mặc định im lặng
+- Người dùng phải có thể dừng luồng qua tương tác Claude Desktop
+- Không được vi phạm ràng buộc một phiên bản whisper tại một thời điểm
+- Đánh đổi giữa độ trễ và độ chính xác phải có thể cấu hình bởi người dùng
 
-**Sử dụng thương mại:** Cần có thỏa thuận giấy phép thương mại riêng. Xem [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
-
-`WHISPER_PRIVACY_MODE` cho triển khai trong ngành được quản lý đang được phát triển và dự kiến trong phiên bản tương lai. Xem [PRIVACY.md](PRIVACY.md) để biết hướng dẫn hiện tại.
-
-## Đã lên kế hoạch — v2.3.0: Mở rộng định dạng đầu ra
-
-### Định dạng phụ đề VTT
-Đầu ra WebVTT (`.vtt`) cùng với SRT. VTT là tiêu chuẩn web được YouTube, HTML5 `<video>` và hầu hết các trình phát hiện đại sử dụng. whisper-cli hỗ trợ gốc. Thêm `vtt` như định dạng đầu ra hợp lệ trong `transcribe_audio`, `generate_subtitles` và `spawnDetached`. Cập nhật `buildArgs` và tất cả schema công cụ liên quan, README và tài liệu đa ngôn ngữ.
-
-### Định dạng LRC
-Đầu ra định dạng LRC (`.lrc`) lời bài hát/karaoke qua `-olrc`. Được dùng bởi các trình phát phương tiện để hiển thị lời bài hát đồng bộ. Chi phí triển khai bằng không — flag CLI gốc.
-
-### Định dạng CSV
-Đầu ra CSV (`.csv`) qua `-ocsv`. Dữ liệu bảng có cấu trúc với thời gian đoạn — hữu ích cho phân tích downstream, quy trình căn chỉnh clip và nhập vào công cụ bảng tính. Chi phí triển khai bằng không — flag CLI gốc.
+**Trạng thái:** Giai đoạn thiết kế. Phụ thuộc vào API phát trực tuyến ổn định của whisper.cpp.
 
 ---
 
@@ -225,7 +191,7 @@ Cho người dùng quản lý các dự án chỉnh sửa video lớn với thư
 ### Phân tách người nói (pyannote-audio)
 Phân tách người nói mono đầy đủ với nhãn ID người nói — đánh dấu chuyển đổi người nói trong toàn bộ bản ghi bất kể cấu hình kênh. Khác với flag `--diarize` stereo tích hợp (v2.2.0) và TinyDiarize.
 
-**Triển khai:** Cần [pyannote-audio](https://github.com/pyannote/pyannote-audio) — thư viện dựa trên Python với yêu cầu token truy cập mô hình Hugging Face. Stack phụ thuộc hoàn toàn riêng biệt so với pipeline whisper.cpp.
+**Triển khai:** Cần [pyannote-audio](https://github.com/pyannote/pyannote-audio) — thư viện dựa trên Python với yêu cầu token truy cập mô hình Hugging Face. Stack phụ thuộc hoàn toàn riêng biệt.
 
 **Trạng thái:** Tính năng nâng cao tùy chọn với tài liệu cài đặt riêng. Không bao gồm trong gói chính.
 
@@ -247,15 +213,25 @@ Pipeline hậu xử lý:
 
 ---
 
+## Giấy phép
+
+whisper-windows-mcp được cấp phép kép.
+
+**Sử dụng phi thương mại:** MIT — miễn phí cho mục đích cá nhân, giáo dục và phi thương mại. Xem [LICENSE](LICENSE).
+
+**Sử dụng thương mại:** Cần có thỏa thuận giấy phép thương mại riêng cho bất kỳ mục đích kinh doanh, chuyên nghiệp hoặc tạo doanh thu nào. Xem [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+
+---
+
 ## Phân phối
 
-Có sẵn trên [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org) và [Glama](https://glama.ai).
+Có sẵn trên [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai) và [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) (PR đã gửi).
 
 ---
 
 ## Tài liệu đa ngôn ngữ
 
-Tài liệu tiếng Nhật, tiếng Hàn và tiếng Việt được duy trì song song với tiếng Anh. Các tệp sau phải được cập nhật để khớp với tài liệu tiếng Anh sau mỗi bản phát hành:
+Sau mỗi bản phát hành, các tệp sau phải được cập nhật để khớp với tài liệu tiếng Anh:
 
 **Tiếng Nhật (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
@@ -271,9 +247,9 @@ Tài liệu tiếng Nhật, tiếng Hàn và tiếng Việt được duy trì so
 
 **Tiếng Tây Ban Nha (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
-**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+**Tiếng Ba Lan (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
 
-**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+**Tiếng Romania (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
 
 Chào mừng đóng góp cộng đồng cho các ngôn ngữ khác.
 

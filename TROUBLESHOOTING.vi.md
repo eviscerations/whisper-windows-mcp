@@ -136,13 +136,13 @@ Sau đó phiên âm tệp WAV trực tiếp.
 
 **Nguyên nhân:** whisper-cli.exe không thể ghi tệp đầu ra khi đường dẫn chứa ký tự Unicode (tiếng Việt, tiếng Nhật, tiếng Hàn, emoji, dấu ngoặc, v.v.) hoặc một số ký tự đặc biệt nhất định.
 
-**Giải pháp tạm thời hiện tại:** Đổi tên tệp để chỉ dùng ký tự ASCII trước khi phiên âm, sau đó đổi lại nếu cần.
+**Đã sửa trong v2.0.0.** Nếu bạn đang chạy phiên bản hiện tại, vấn đề này sẽ không xảy ra. Nếu vẫn xảy ra, hãy cập nhật bằng `npm install -g whisper-windows-mcp` và khởi động lại Claude Desktop.
+
+Nếu bạn đang dùng phiên bản cũ, giải pháp tạm thời: đổi tên tệp để chỉ dùng ký tự ASCII trước khi phiên âm, sau đó đổi lại nếu cần.
 
 ```
 ren "ten_file_tieng_viet.mp4" "temp_transcribe.mp4"
 ```
-
-**Trạng thái:** Đây là lỗi đã biết. Đang lên kế hoạch sửa bằng cách định tuyến đầu ra qua đường dẫn tạm thời đã làm sạch và di chuyển kết quả đến đích chính xác sau khi hoàn thành.
 
 ---
 
@@ -150,25 +150,13 @@ ren "ten_file_tieng_viet.mp4" "temp_transcribe.mp4"
 
 **Nguyên nhân có thể:**
 
-1. **Tên tệp Unicode** — Xem ở trên.
+1. **Đường dẫn mô hình sai** — Tiến trình tách rời không kế thừa đường dẫn đã sửa. Chạy `check_config` để xác nhận đường dẫn.
 
-2. **Đường dẫn mô hình sai** — Tiến trình tách rời không kế thừa đường dẫn đã sửa. Chạy `check_config` để xác nhận đường dẫn.
+2. **Tiến trình bị tắt** — Nếu whisper-cli.exe bị tắt thủ công giữa chừng, sẽ không có tệp đầu ra. Thử lại.
 
-3. **Tiến trình bị tắt** — Nếu whisper-cli.exe bị tắt thủ công giữa chừng, sẽ không có tệp đầu ra. Thử lại.
+3. **VRAM không đủ** — Mô hình lớn trên GPU ít VRAM có thể thất bại lặng lẽ. Thử mô hình nhỏ hơn.
 
-4. **VRAM không đủ** — Mô hình lớn trên GPU ít VRAM có thể thất bại lặng lẽ. Thử mô hình nhỏ hơn.
-
-5. **Lỗi chuyển đổi tệp** — Thử phiên âm tệp WAV trực tiếp để xác định vấn đề là ở chuyển đổi hay phiên âm.
-
----
-
-## Phiên âm nền không tạo ra đầu ra SRT
-
-**Nguyên nhân:** Chế độ nền (`background=true` trong `transcribe_audio`) hiện chỉ tạo ra đầu ra `.txt`. Định dạng SRT trong chế độ nền chưa được triển khai.
-
-**Giải pháp tạm thời:** Với tệp dưới ~4 phút, sử dụng `generate_subtitles` ở chế độ chặn. Với tệp dài hơn, trước tiên phiên âm ở chế độ nền để lấy `.txt`, sau đó nếu cần SRT, hãy dùng `generate_subtitles` trên cùng tệp đó (sẽ phiên âm lại).
-
-**Trạng thái:** Hỗ trợ SRT trong chế độ nền được lên kế hoạch cho bản phát hành tương lai.
+4. **Lỗi chuyển đổi tệp** — Thử phiên âm tệp WAV trực tiếp để xác định vấn đề là ở chuyển đổi hay phiên âm.
 
 ---
 
@@ -241,9 +229,7 @@ Gọi `check_batch_progress` lại. Nếu vẫn bị kẹt:
 
 ## Dọn dẹp thư mục tệp tạm thời
 
-whisper-windows-mcp ghi tệp trạng thái tác vụ và nhật ký vào `%TEMP%\whisper-mcp-jobs\` trong quá trình phiên âm. Chúng tích lũy theo thời gian và có thể chiếm dung lượng đĩa, đặc biệt là các tệp `.log` từ các tác vụ phiên âm dài.
-
-Sau khi đợt hoặc tác vụ hoàn thành và bạn đã xác nhận các bản phiên âm đầu ra, bạn có thể xóa an toàn mọi thứ trong thư mục này:
+whisper-windows-mcp ghi tệp trạng thái tác vụ và nhật ký vào `%TEMP%\whisper-mcp-jobs\` trong quá trình phiên âm. Máy chủ tự động dọn dẹp các tệp cũ hơn 7 ngày khi khởi động. Để dọn dẹp thủ công, sau khi đợt hoặc tác vụ hoàn thành và bạn đã xác nhận các bản phiên âm đầu ra, bạn có thể xóa an toàn mọi thứ trong thư mục này:
 
 ```powershell
 Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Recurse -Force

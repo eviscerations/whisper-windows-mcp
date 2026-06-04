@@ -17,6 +17,7 @@ Após a instalação, basta falar diretamente no Claude Desktop:
 - *"Inicie a transcrição em lote de todos os arquivos nesta pasta"*
 - *"Quanto tempo vai levar para transcrever esses arquivos?"*
 - *"Verifique se a aceleração por GPU está funcionando"*
+- *"Transcreva este arquivo no modo de privacidade"*
 
 ---
 
@@ -163,50 +164,54 @@ Transcreve um único arquivo. Suporta modo de bloqueio (padrão) ou em segundo p
 |---|---|
 | `file_path` | Caminho absoluto para o arquivo (obrigatório) |
 | `language` | Código do idioma (`pt`, `en`, `ja` etc.) ou `auto` para detecção automática. Padrão: `en` |
-| `output_format` | `text` (padrão), `timestamps`, `json` ou `srt` |
+| `output_format` | `timestamps` (padrão), `text`, `json`, `srt`, `vtt`, `lrc` ou `csv` |
 | `save_to_file` | Salva a transcrição como .txt ao lado do arquivo de origem |
 | `background` | Executa como tarefa separada — retorna ID da tarefa imediatamente. Use `check_progress` para monitorar. Recomendado para arquivos com mais de 10 minutos. |
+| `privacy_mode` | Substitui o modo de privacidade para esta chamada. `true` = apenas metadados, sem texto de transcrição transmitido. `false` = retorna texto mesmo se `WHISPER_PRIVACY_MODE=true` globalmente. Omita para usar a configuração global. |
 | `threads` | Substitui o número de threads da CPU |
-| `temperature` | Temperatura de amostragem 0,0–1,0. Padrão 0,0 (determinístico). Valores mais altos reduzem alucinações em áudio ruidoso. |
+| `temperature` | Temperatura de amostragem 0,0–1,0. Padrão 0,0 (determinístico). |
 | `prompt` | String de contexto prévio — melhora a precisão para vocabulário específico de domínio ou nomes de falantes. Ex.: `"Nomes: Keemstar, DramaAlert."` |
 | `condition_on_prev_text` | Reativa o condicionamento de contexto entre segmentos. Padrão false. |
-| `beam_size` | Largura de busca beam. Maior = mais preciso, mais lento. Padrão 5. |
-| `best_of` | Número de sequências candidatas avaliadas. Padrão 5. |
+| `beam_size` | Largura de busca em feixe. Maior = mais preciso, mais lento. Padrão 5. |
+| `best_of` | Sequências candidatas avaliadas. Padrão 5. |
 | `gpu_device` | Índice do dispositivo GPU para sistemas multi-GPU. Padrão 0. |
-| `processors` | Número de processadores paralelos. Padrão 1. |
+| `processors` | Contagem de processadores paralelos. Padrão 1. |
 | `word_timestamps` | Uma palavra por segmento com carimbo de tempo. Útil para alinhamento de clipes. |
 | `max_segment_length` | Comprimento máximo do segmento em caracteres. |
 | `diarize` | Diarização de falantes estéreo — requer áudio estéreo com falantes em canais separados. |
 | `vad_model` | Caminho para o arquivo .bin do modelo Silero VAD. Remove silêncio antes de transcrever — reduz alucinações em arquivos ruidosos. |
 | `offset_t` | Deslocamento de início em milissegundos. |
-| `duration` | Duração a processar em milissegundos a partir do deslocamento. |
+| `duration` | Duração a processar a partir do deslocamento em milissegundos. |
 
 ---
 
 ### `check_progress`
 Monitora uma tarefa de transcrição em segundo plano iniciada com `transcribe_audio` (background=true).
 
-Retorna o tempo decorrido, o último carimbo de tempo processado, a porcentagem e a transcrição completa ao terminar.
+Retorna o tempo decorrido, o último carimbo de tempo processado e a transcrição completa ao concluir.
 
 | Parâmetro | Descrição |
 |---|---|
 | `job_id` | ID da tarefa retornado por `transcribe_audio` |
+| `privacy_mode` | Substitui o modo de privacidade para esta chamada. |
 
 ---
 
 ### `start_batch`
-Transcreve automaticamente e em sequência todos os arquivos ainda não transcritos em uma pasta. Ordena por duração (mais curtos primeiro), processa um por um como tarefas em segundo plano e valida cada saída.
+Transcreve automaticamente em sequência todos os arquivos não transcritos em uma pasta. Ordena cronologicamente (os mais curtos primeiro), processa um por um como tarefa em segundo plano e valida cada saída.
 
 | Parâmetro | Descrição |
 |---|---|
 | `folder_path` | Caminho para a pasta (obrigatório) |
 | `language` | Código do idioma. Padrão: `en` |
+| `output_format` | `timestamps` (padrão), `text`, `srt`, `vtt`, `lrc`, `csv` |
+| `privacy_mode` | Substitui o modo de privacidade para este lote. |
 | `threads` | Substitui o número de threads da CPU |
 
 ---
 
 ### `check_batch_progress`
-Monitora um lote em execução. Avança automaticamente para o próximo arquivo quando o atual termina. Retorna o progresso geral, o arquivo atual com carimbo de tempo, o ETA e os arquivos com falha.
+Monitora um lote em execução. Avança automaticamente para o próximo arquivo quando o atual é concluído. Retorna o progresso geral, o arquivo atual com carimbo de tempo, ETA e arquivos com falha.
 
 | Parâmetro | Descrição |
 |---|---|
@@ -215,32 +220,34 @@ Monitora um lote em execução. Avança automaticamente para o próximo arquivo 
 ---
 
 ### `transcribe_batch` (interativo)
-Processa arquivos um a um com visualização prévia e confirmação antes de cada um. Útil quando você quer revisar à medida que avança.
+Processa arquivos um por um com visualização prévia e confirmação antes de cada arquivo. Útil quando você quer revisar durante o processo.
 
 | Parâmetro | Descrição |
 |---|---|
 | `folder_path` | Caminho para a pasta (obrigatório) |
-| `file_index` | Qual arquivo processar (começa em 1). Omita para listar os arquivos primeiro. |
+| `file_index` | Arquivo a processar (começa em 1). Omita para listar arquivos primeiro. |
 | `language` | Código do idioma. Padrão: `en` |
 | `recursive` | Incluir subpastas |
 
 ---
 
 ### `generate_subtitles`
-Gera arquivos de legenda SRT. Suporta detecção automática de idioma e saída de tradução para inglês.
+Gera arquivos de legenda. Suporta detecção automática de idioma e saída de tradução para inglês.
 
 | Parâmetro | Descrição |
 |---|---|
 | `file_path` | Caminho para o arquivo (obrigatório) |
 | `language` | Código do idioma ou `auto` para detecção automática. Padrão: `en` |
-| `translate_to_english` | Também gera `.en.srt` com tradução para inglês. Aplicável apenas quando a fonte não for inglês. |
+| `output_format` | `srt` (padrão) ou `vtt` |
+| `translate_to_english` | Também gera um arquivo de legenda com tradução para inglês. Aplicável apenas quando a fonte não for inglês. |
+| `background` | Executa como tarefa em segundo plano separada. Retorna um ID de tarefa para `check_progress`. |
 | `threads` | Substitui o número de threads da CPU |
 
 Quando ambos são solicitados, dois arquivos são salvos ao lado da origem:
 - `arquivo.pt.srt` — idioma original
 - `arquivo.en.srt` — tradução para inglês
 
-> A tradução integrada do Whisper apenas traduz **para o inglês**. Para outros idiomas de destino, processe o conteúdo do arquivo .srt separadamente.
+> A tradução integrada do Whisper traduz apenas **para o inglês**. Para outros idiomas de destino, processe o conteúdo do arquivo `.srt` separadamente.
 
 ---
 
@@ -265,7 +272,7 @@ Lista todos os arquivos de modelo Whisper instalados no seu diretório de modelo
 ---
 
 ### `download_model`
-Baixa um modelo Whisper diretamente do Hugging Face para o seu diretório de modelos. Aceita o nome do modelo (ex.: `large-v3-turbo`, `medium.en-q5_0`) e gerencia o download automaticamente. Baixa apenas de namespaces confiáveis do Hugging Face. Após o download, use `switch_model` para ativar.
+Baixa um modelo Whisper diretamente do Hugging Face para o seu diretório de modelos. Baixa apenas de namespaces confiáveis do Hugging Face. Após o download, use `switch_model` para ativar.
 
 | Parâmetro | Descrição |
 |---|---|
@@ -301,14 +308,16 @@ Detecta o hardware GPU e confirma se a aceleração Vulkan está disponível. Re
 
 O release Vulkan pré-compilado ativa a aceleração por GPU automaticamente. Testado em AMD Radeon RX Vega 56 (GCN 5ª geração). Qualquer GPU com suporte a Vulkan 1.0+ deve funcionar, incluindo NVIDIA e Intel Arc.
 
-**Comparação de desempenho (modelo medium.en, arquivo de áudio ~5 minutos):**
+**Comparação de desempenho (modelo large-v3, arquivo de áudio ~14 minutos):**
 
 | Hardware | Tempo |
 |---|---|
-| Somente CPU (Ryzen 7 2700x, 8 threads) | 8–12 minutos |
-| GPU (Vega 56 via Vulkan) | 20–40 segundos |
+| Somente CPU (Ryzen 7 2700x, 8 threads) | ~22 minutos (estimado) |
+| GPU (Vega 56 via Vulkan) | ~3 min 22 seg |
 
-A utilização da GPU durante a transcrição é tipicamente de 15–20%, voltando ao estado ocioso entre os arquivos. A CPU fica em torno de 15%.
+A utilização da GPU durante a transcrição é tipicamente de 15–20%, voltando ao estado ocioso entre os arquivos.
+
+Compatível com Windows 10 e Windows 11. Nenhuma configuração específica para Windows 11 é necessária — a ferramenta não faz chamadas diretas à API Win32 e funciona em ambos os sistemas operacionais.
 
 ---
 
@@ -320,9 +329,25 @@ Para a melhor precisão multilíngue, use o modelo `large-v3`. Modelos somente i
 
 **Exemplo — vídeo em língua estrangeira com legendas:**
 1. Peça ao Claude para gerar legendas com `language=auto` e `translate_to_english=true`
-2. O Whisper detecta o idioma e gera o SRT no idioma original
-3. Uma segunda passagem gera o SRT com tradução para inglês
-4. Carregue qualquer um dos arquivos no VLC via Legendas → Adicionar Arquivo de Legenda
+2. O Whisper detecta o idioma e gera o SRT ou VTT no idioma original
+3. Uma segunda passagem gera a tradução para inglês
+4. Carregue o SRT no VLC via Legendas → Adicionar Arquivo de Legenda, ou use o VTT em qualquer player web
+
+---
+
+## Privacidade e conformidade
+
+O whisper-windows-mcp inclui uma arquitetura de privacidade integrada para conteúdo sensível e regulamentado.
+
+**O áudio e vídeo nunca saem da sua máquina.** Essa garantia é incondicional.
+
+**O texto de transcrição** é diferente — quando retornado inline em uma resposta de ferramenta, é processado pela API do Claude. Para a maioria dos usuários isso é o comportamento esperado. Para conteúdo regulamentado (médico, jurídico, financeiro, corporativo), o modo de privacidade previne isso.
+
+**O modo de privacidade** restringe todas as respostas das ferramentas apenas a metadados (nome do arquivo, contagem de palavras, caminho de salvamento). Nenhum texto de transcrição é transmitido à API do Claude em nenhuma circunstância. Ative por chamada com `privacy_mode=true` em qualquer ferramenta de transcrição, ou globalmente via `WHISPER_PRIVACY_MODE=true` na sua configuração.
+
+**Porta de consentimento** — no primeiro uso por sessão no modo padrão, uma divulgação de privacidade completa é exibida antes que qualquer texto de transcrição seja retornado. Você deve confirmar explicitamente antes de continuar. Defina `WHISPER_CONSENT_ACKNOWLEDGED=true` na sua configuração para ignorar isso para conteúdo não sensível.
+
+Veja [PRIVACY.md](PRIVACY.md) para orientação de conformidade completa (HIPAA, GDPR, privilégio advogado-cliente, FERPA, SOX, PCI-DSS).
 
 ---
 
@@ -340,7 +365,30 @@ Esta ferramenta foi criada para minimizar as interações com a API do Claude. T
 | `WHISPER_MODEL` | Caminho para o arquivo de modelo .bin (obrigatório) |
 | `WHISPER_THREADS` | Substitui o número de threads da CPU |
 | `FFMPEG_PATH` | Caminho para o ffmpeg se não estiver no PATH do sistema |
-| `WHISPER_PRIVACY_MODE` | **Planejado.** Quando definido como `true`, as respostas das ferramentas retornam apenas metadados — nenhum texto de transcrição é retornado ao Claude. Para conteúdo regulamentado ou confidencial. Veja [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_PRIVACY_MODE` | Defina como `true` para que todas as respostas das ferramentas retornem apenas metadados — nenhum texto de transcrição retornado ao Claude. Para conteúdo regulamentado ou confidencial. Pode ser substituído por chamada com o parâmetro `privacy_mode`. Veja [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_CONSENT_ACKNOWLEDGED` | Defina como `true` para suprimir a divulgação de consentimento única por sessão exibida antes de retornar texto de transcrição. Defina quando você entende os limites de privacidade e não precisa mais do lembrete. Sem efeito quando o modo de privacidade está ativo. |
+
+---
+
+## Segurança
+
+**Verificação do binário.** Para verificar a integridade do binário whisper-cli.exe no release pré-compilado, verifique o hash SHA256 no PowerShell:
+
+```powershell
+Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
+```
+
+O hash esperado está documentado na [página de releases](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
+
+**Validação de entrada.** Todos os caminhos de arquivo são validados antes do uso — caminhos UNC (`\\server\share`) e sequências de travessia de diretório (`..`) são rejeitados. Arquivos acima de 10 GB são rejeitados para evitar esgotamento de recursos.
+
+**Consciência de injeção de transcrição.** Arquivos de áudio podem conter conteúdo falado que, quando transcrito, se assemelha a instruções. As defesas integradas do Claude lidam com isso, mas vale saber que o próprio servidor MCP trata o conteúdo de transcrição como dados — nunca como instruções.
+
+**Downloads de modelos são restritos.** A ferramenta `download_model` baixa apenas de dois namespaces confiáveis do Hugging Face (`ggerganov/whisper.cpp` e `ggml-org`). URLs arbitrários são rejeitados. Redirecionamentos são validados contra uma lista de permissões antes de serem seguidos.
+
+**Troca de modelos é isolada em sandbox.** `switch_model` aceita apenas arquivos `.bin` dentro do diretório de modelos configurado. Caminhos fora desse diretório são rejeitados.
+
+Veja [SECURITY.md](SECURITY.md) para a política de segurança completa.
 
 ---
 
@@ -358,33 +406,11 @@ Lista de verificação rápida:
 
 ---
 
-## Segurança e privacidade
-
-O whisper-windows-mcp foi projetado com segurança como princípio central.
-
-**O áudio nunca sai da sua máquina.** Nenhum arquivo de áudio ou vídeo, caminho de arquivo ou telemetria é transmitido para qualquer servidor. Nenhuma API de nuvem é necessária para a funcionalidade principal.
-
-**Texto de transcrição e o limite da API.** Quando uma resposta de ferramenta inclui texto de transcrição, esse texto é processado pela API do Claude — ele sai da sua máquina local. Para a maioria dos usuários (conteúdo público, podcasts, gravações de streaming) isso é um comportamento esperado. Se você lida com gravações médicas, jurídicas, financeiras ou outras regulamentadas, veja [PRIVACY.md](PRIVACY.md) para orientação de conformidade e opções de configuração.
-
-A variável de ambiente `WHISPER_PRIVACY_MODE` está planejada e limitará todas as respostas das ferramentas apenas a metadados (nome do arquivo, duração, contagem de palavras) — nenhum texto de transcrição será retornado ao Claude. Esta é a configuração correta para conteúdo regulamentado ou confidencial.
-
-**Validação de entrada.** Todos os caminhos de arquivo são validados antes do uso — caminhos UNC (`\\server\share`) e sequências de travessia de diretório (`..`) são rejeitados. Arquivos acima de 10 GB são rejeitados para evitar esgotamento de recursos.
-
-**Consciência de injeção de transcrição.** Arquivos de áudio podem conter conteúdo falado que, quando transcrito, se assemelha a instruções. As defesas integradas do Claude lidam com isso, mas vale saber que o próprio servidor MCP trata o conteúdo de transcrição como dados — nunca como instruções.
-
-**Downloads de modelos são restritos.** A ferramenta `download_model` baixa apenas de dois namespaces confiáveis do Hugging Face (`ggerganov/whisper.cpp` e `ggml-org`). URLs arbitrários são rejeitados. Redirecionamentos são validados contra uma lista de permissões antes de serem seguidos.
-
-**Troca de modelos é isolada em sandbox.** `switch_model` aceita apenas arquivos `.bin` dentro do diretório de modelos configurado. Caminhos fora desse diretório são rejeitados.
-
-**Sem novas dependências de rede.** Os downloads de modelos usam o `https` integrado do Node.js — nenhuma biblioteca HTTP externa é adicionada ao pacote.
-
----
-
 ## Licença
 
 **Uso não comercial:** MIT — gratuito para uso pessoal, educacional e não comercial. Veja [LICENSE](LICENSE).
 
-**Uso comercial:** É necessário um contrato de licença comercial separado para qualquer uso empresarial, profissional ou que gere receita. Veja [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) para os termos e informações de contato.
+**Uso comercial:** É necessário um contrato de licença comercial separado para qualquer uso empresarial, profissional ou que gere receita. Veja [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) para os termos e informações de contato.
 
 ## Contribuições
 

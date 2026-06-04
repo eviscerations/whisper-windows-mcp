@@ -1,6 +1,6 @@
 # whisper-windows-mcp — ロードマップ
 
-現在のバージョン：**v2.2.0**
+現在のバージョン：**v2.3.0**
 
 ---
 
@@ -30,7 +30,7 @@
 `tasklist /FI`を使用した`isWhisperRunning()`チェックを追加。競合するプロセスを生成する代わりに、明確なエラーとTask Managerの手順を返します。
 
 ### ✅ v1.4.0 — Vulkan GPU加速
-VS Build Toolsと Vulkan SDKを使用して`-DGGML_VULKAN=ON`でwhisper.cppをコンパイル。ビルド済みVulkanバイナリを`whisper-vulkan-win-x64.zip`として配布。
+VS Build ToolsとVulkan SDKを使用して`-DGGML_VULKAN=ON`でwhisper.cppをコンパイル。ビルド済みVulkanバイナリを`whisper-vulkan-win-x64.zip`として配布。
 
 **AMD Radeon RX Vega 56での結果：** GPU使用率平均約16%。58分のファイルがGPUで約4.5分（CPU専用では約88分）で完了。
 
@@ -54,109 +54,80 @@ FFprobeを使用した`analyze_media`ツール：時間、サイズ、コーデ�
 ### ✅ v2.0.0 — Unicodeセーフパス + バックグラウンドSRT
 **Unicodeファイル名：** 非ASCII文字を含むファイル名でバックグラウンド文字起こしがサイレントに失敗する問題を修正。ジョブIDベースのサニタイズされた一時パスに出力を書き込み、完了後に正しい宛先に移動するよう変更。
 
-**バックグラウンドモードでのSRT：** `spawnDetached`が要求されたフォーマットに関わらず`-otxt`をハードコードしており、`generate_subtitles`が同期的にブロックして長尺ファイルでMCPタイムアウトが発生していた問題を修正。`spawnDetached`に`outputFormat`パラメータを追加し、バックグラウンドモードで`text`と`srt`出力をサポート。
+**バックグラウンドモードでのSRT：** `spawnDetached`が要求されたフォーマットに関わらず`-otxt`をハードコードしていた問題を修正。`spawnDetached`に`outputFormat`パラメータを追加し、バックグラウンドモードで`text`と`srt`出力をサポート。
 
 ### ✅ v2.0.1 — バグ修正（v2.2.0に含む）
-- `buildArgs`と`spawnDetached`の両方で`--max-context 0`をハードコード — 長尺音声でのハルシネーションループを防止。現在のバイナリ（v1.8.3世代）では`--condition-on-previous-text`と`--no-context`は無効なフラグ — 正しいフラグは`--max-context N`。
-- `--no-speech-thold 0.6`を両関数にハードコード — 信頼度閾値を下回るセグメントを内容のハルシネーションではなく無音として扱う。
+- `buildArgs`と`spawnDetached`の両方で`--max-context 0`をハードコード — 長尺音声でのハルシネーションループを防止。
+- `--no-speech-thold 0.6`を両関数にハードコード — 信頼度閾値を下回るセグメントを無音として扱う。
 - パス検証（`validateInputPath`）— UNCパスと`..`トラバーサルを拒否。
 - `MAX_FILE_SIZE_MB = 10240`ファイルサイズガード。
 - `transcribeSingle`にトランスクリプトインジェクションのセキュリティコメントを追加。
-- TROUBLESHOOTING.mdとTROUBLESHOOTING.ja.mdで壊れていたCLIバッチコマンドを修正 — FFmpeg事前変換の正しいアプローチと`Start-Process -RedirectStandardOutput`の使用方法を文書化。
+- TROUBLESHOOTING.mdで壊れていたCLIバッチコマンドを修正。
 
 ### ✅ v2.1.0 — モデル管理スイート（v2.2.0に含む）
 - `WHISPER_MODEL`を`const`から`let`に変更（セッション中に変更可能）。
 - `MODEL_REGISTRY` — 16モデル、フル精度と量子化バリアント、Hugging FaceダウンロードURL。
-- `ALLOWED_HF_PREFIXES` — ダウンロードを`ggerganov/whisper.cpp`と`ggml-org`ネームスペースに制限するURLホワイトリスト。
+- `ALLOWED_HF_PREFIXES` — ダウンロードを`ggerganov/whisper.cpp`と`ggml-org`ネームスペースに制限するURLアローリスト。
 - `list_models`ツール — モデルディレクトリをスキャン、アクティブモデル、サイズ、ユースケース、利用可能なダウンロードを表示。
-- `download_model`ツール — Node.js組み込み`https`でHugging Faceからダウンロード、Windowsファイルハンドル解放の競合を修正（コールバック後にrenameSync）。
+- `download_model`ツール — Node.js組み込み`https`でHugging Faceからダウンロード、アトミックリネーム。
 - `switch_model`ツール — `.bin`拡張子の検証、ディレクトリ制約、プロセスロックチェック。
 - `recommendedModel()`を更新 — 6GB以上のVRAMで`large-v3-turbo`を推奨。
 
-### ✅ v2.2.0 — 品質・パラメータ・ハードウェア拡張（現在）
+### ✅ v2.2.0 — 品質・パラメータ・ハードウェア拡張
 - `WhisperOptions`インターフェース — `buildArgs`の位置引数を置き換え。
 - `transcribe_audio`に新パラメータ追加：`temperature`、`prompt`、`condition_on_prev_text`、`no_speech_thold`、`beam_size`、`best_of`、`gpu_device`、`processors`、`word_timestamps`、`max_segment_length`、`split_on_word`、`diarize`、`vad_model`、`offset_t`、`duration`。
 - `generate_subtitles`に新パラメータ追加：`temperature`、`prompt`、`beam_size`、`best_of`、`diarize`、`vad_model`。
 - `spawnDetached`をリファクタリング — バックグラウンド/バッチモードですべての品質フラグが適用されるよう修正。
-- `runSrtPass`を更新し`extraOpts`を受け付けるよう変更。
-- バッチ出力の修正 — `readBatchProgress`が検証前に一時出力を最終宛先に移動するよう修正（バッチ「失敗」の根本原因）。
+- バッチ出力の修正 — `readBatchProgress`が検証前に一時出力を最終宛先に移動するよう修正。
 
-**フラグ互換性の注意：** `gpu_device` / `-g`はwhisper.cpp v1.8.4で追加されました。リリースに含まれるビルド済みVulkanバイナリはv1.8.3世代 — このパラメータはツールで受け付けられますが、ユーザーがv1.8.4以降のバイナリに更新するまで効果はありません。
+**フラグ互換性の注意：** `gpu_device` / `--device`はwhisper.cpp v1.8.4で追加されました。リリースに含まれるビルド済みVulkanバイナリはv1.8.3世代 — このパラメータはツールで受け付けられますが、ユーザーがv1.8.4以降のバイナリに更新するまで効果はありません。
 
-**現在のバイナリ（v1.8.3世代）で確認済みの有効なフラグ：**
-`--max-context`、`--no-speech-thold`、`--processors`、`--offset-t`、`--duration`、`--best-of`、`--beam-size`、`--diarize`、`--tinydiarize`、`--temperature`、`--prompt`、VADフラグ。
+### ✅ v2.2.2 — パッチ
+- デュアルライセンス修正 — LICENSEとLICENSE-COMMERCIAL.mdを修正。
+- 軽微なドキュメント修正。
 
-**現在のバイナリに存在しないフラグ：** `--no-context`（`--max-context 0`を使用）、`--condition-on-previous-text`（Python APIの名前のみ）、`--gpu-device` / `-g`（v1.8.4以降）。
+### ✅ v2.3.0 — バッチ自動進行、プライバシーアーキテクチャ、出力フォーマット拡張
 
----
+**バッチ自動進行（重大バグ修正）：** `start_batch`はキューを進行させるために積極的なポーリングが必要でした。生成されたwhisper-cli子プロセスに`on('exit')`ハンドラーをアタッチするよう修正。プロセス終了時に終了コールバックを介して即座に自動進行し、ポーリングオーバーヘッドとAPI呼び出しコストはゼロ。同時発生する終了ハンドラーと`check_batch_progress`呼び出しによる二重スポーンを防ぐミューテックスを追加。
 
-## 重大なバグ — バッチ自動進行（確認済み、修正待ち）
+**プライバシーアーキテクチャ：**
+- `WHISPER_PRIVACY_MODE`環境変数 — `true`の場合、すべてのツールレスポンスはメタデータのみを返す（ファイル名、単語数、保存パス）。トランスクリプトテキストはClaudeのAPIに送信されない。トランスクリプトはローカルファイルとしてのみ存在。
+- `WHISPER_CONSENT_ACKNOWLEDGED`環境変数 — `true`の場合、機密性のないコンテンツに対してセッションごとの同意ゲートを抑制。
+- `transcribe_audio`、`transcribe_batch`、`start_batch`、`check_progress`へのper-call `privacy_mode`パラメータ。グローバル環境変数をどちらの方向にも上書き。再起動不要でper-callで切り替え可能。
+- プライバシーモードゲート（`checkPrivacyGate()`）— 有効なプライバシーモードがアクティブな場合、すべての操作前に表示。最初の呼び出しでアーム（開示を表示）、2回目でクリア（許可）。各操作後にリセット。セッション同意ゲートとは完全に独立。
+- セッション同意ゲート（`transcriptPolicy()`）— 標準モードで最初のトランスクリプト返却呼び出しの前にセッションに1回表示。`sessionConsentGiven`フラグで管理。
+- `PRIVACY.md` — HIPAA、GDPR、弁護士・依頼者特権、FERPA、SOX、PCI-DSS、NDA/企業秘密を網羅した完全なコンプライアンスドキュメント。
+- トランスクリプトを返すすべてのツールのツール説明にプライバシー警告を追加。
 
-### ポーリングなしでバッチが自動進行しない
+**出力フォーマット拡張：**
+- `vtt` — `-ovtt`によるWebVTT字幕出力。`transcribe_audio`、`generate_subtitles`、`start_batch`、バックグラウンドモードで利用可能。
+- `lrc` — `-olrc`によるLRC歌詞/カラオケフォーマット。`transcribe_audio`とバックグラウンドモードで利用可能。
+- `csv` — `-ocsv`によるタイムスタンプ付きCSV。`transcribe_audio`とバックグラウンドモードで利用可能。
+- `output_format`のデフォルトをすべてのツールとコードパスで`"text"`から`"timestamps"`に変更。プレーンテキストはオプトイン。
 
-`start_batch`はファイル間でキューを自律的に進行させません。バッチは`check_batch_progress`が呼ばれた場合のみ進行します。ポーリングなしでは、各ファイル完了後にバッチが無期限に停止します — whisper-cli.exeが終了しても新しいプロセスは起動せず、`check_batch_progress`が呼ばれるまでキューは進行しません。
+**バグ修正：**
+- Bug 1：`output_format`がバックグラウンドジョブに転送されていなかった — 要求されたフォーマットに関わらずデフォルトの`"text"`が使用されていた。修正済み。
+- Bug 2：バックグラウンドジョブ出力移動操作でのサイレントな`catch {}`がエラーを握りつぶしていた。移動後に明示的な`existsSync`チェックを追加して詳細な失敗メッセージを表示。
+- Bug 3：非プライバシーバックグラウンドジョブで同意ゲートが`check_progress`に意図的に延期される理由を文書化するコメントを追加。
 
-これは夜間の無人バッチ処理というツールの中核的な設計目標を破壊し、Claude API呼び出しの最小化という設計原則にも直接違反します。95ファイルのバッチを完了させるために約200回のポーリング呼び出しが100分かけて必要でした。
-
-**根本原因：** `readBatchProgress`にすべてのキュー進行ロジックが含まれています。`check_batch_progress`が明示的に呼ばれた場合のみ実行されます。バックグラウンドタイマー、ファイルウォッチャー、自律ループは存在しません。
-
-**計画中の修正 — オプションB（exitコールバック、強く推奨）：** 生成されたwhisper-cliの子プロセスに`on('exit')`ハンドラーをアタッチ。プロセスが終了した時点で即座に進行ロジックを呼び出し、出力を検証して次のジョブを起動します。イベント駆動型で、ファイル完了ごとに1回だけ発火し、ポーリングオーバーヘッドとAPI呼び出しコストはゼロです。
-
-**オプションA（フォールバックのみ）：** バッチ状態JSONに既に存在するFFprobe時間データから導出した動的ポーリング間隔を使用した`setInterval`。ファイルサイズは時間の信頼できる代理指標ではありません。
-
-**追加制約：** 修正は既に実行中のwhisper-cli.exeがある場合に2つ目を起動してはなりません — 自動進行パスでもプロセスロックを尊重する必要があります。
-
-**現在の回避策：** バッチが完了するまで`check_batch_progress`を繰り返し呼び出す。ファイルごとに約1回のポーリングが必要です。
-
----
-
-## 予定 — プライバシーアーキテクチャ（Bun移行より前）
-
-これらの変更は、Bun移行より前、および商業・エンタープライズ採用を促進するライセンス変更より前にリリースする必要があります。規制対応のコンプライアンス保護が未解決の状態でエンタープライズグレードのツールを提供することは、規制産業のユーザーに対する責任問題を生じさせます。
-
-### `WHISPER_PRIVACY_MODE`環境変数
-このツールは現在、**音声**がマシンの外に出ないことを保証しています。この保証は**トランスクリプトテキスト**には及んでいません — ツールのレスポンスにトランスクリプトの内容が含まれる場合、そのテキストはClaudeのAPIで処理され、ローカル環境の外に出ます。
-
-「データはマシンの外に出ない」というメッセージを読んだユーザーが、音声から生成されたすべてのコンテンツもローカルに留まると合理的に期待することができるため、このギャップはユーザーには見えません。
-
-`WHISPER_PRIVACY_MODE`を`claude_desktop_config.json`の環境変数として追加します。有効化時：
-- すべてのツールレスポンスはメタデータのみを返す：ファイル名、時間、単語数、完了状態
-- トランスクリプトテキストはどのツールレスポンスにも含まれない
-- Claudeはトランスクリプトの内容を読み取り、分析、または中継できない
-- トランスクリプトはローカルの`.txt`ファイルとしてのみ存在する
-
-これは医療、法律、金融、および企業向けデプロイメントに適切な設定です。APIコールゼロ、データ転送ゼロ、コンプライアンスリスクゼロ。
-
-### トランスクリプトコンテンツへの同意ゲート
-`WHISPER_PRIVACY_MODE`が有効でない場合（デフォルト）、トランスクリプトテキストを含むツールレスポンスは、セッション内の初回使用時に開示通知を前置きする必要があります。この通知はトランスクリプトテキストがAnthropicのAPIに送信されること、「データはマシンの外に出ない」保証の範囲外であること、規制対象コンテンツを扱うユーザーは続行前にコンプライアンス義務を確認する必要があることを明確に伝える必要があります。
-
-実装：`WHISPER_CONSENT_ACKNOWLEDGED`環境変数（デフォルト`false`）。セッション内の最初のトランスクリプト返却時、未承認の場合はClaudeが開示通知を提示し、明示的な確認を求めます。セッション中に一度承認されると、以降のトランスクリプトは再プロンプトなしで返却されます。
-
-### `PRIVACY.md`ドキュメント
-リポジトリルートに`PRIVACY.md`を作成します：
-- 常にローカルに留まるデータ：音声、動画、モデルファイル
-- デフォルトで外部に出る可能性があるデータ：ツールレスポンス内のトランスクリプトテキスト
-- プライバシーモードで常にローカルに留まるデータ：すべて
-- 業界別のコンプライアンスフレームワークガイダンス（HIPAA、GDPR、弁護士・依頼者特権、FERPA、SOX、PCI-DSS）
-- プライバシーモードの設定方法
-- ツールの作者は法律の専門家ではなく、ユーザーが適用法令へのコンプライアンスに対して責任を負うという免責事項
-
-### ツールスキーマへのプライバシー警告
-`ListToolsRequestSchema`のツール説明を更新し、トランスクリプトテキストを返すツールにプライバシーに関する注意書きを追加します。これはClaude Desktopのツール説明に表示され、使用時点での認識を高めます。
-
-### 一時ディレクトリの自動クリーンアップ
-`%TEMP%\whisper-mcp-jobs\`にジョブ状態とログファイルが時間とともに蓄積されます。設定可能な保持期間（デフォルト：7日）を過ぎた完了ジョブファイルの自動クリーンアップを追加します。現在はユーザーが手動で`Remove-Item`を実行する必要があります。
+**その他：**
+- 一時ディレクトリの自動クリーンアップ — `cleanupOldJobFiles()`が起動時に実行し、`%TEMP%\whisper-mcp-jobs\`から7日以上経過した`.json`と`.log`ファイルを削除。
+- `check_config`がプライバシーモードの状態を報告するよう更新。
+- 起動ログがプライバシーモードのオン/オフを報告。
+- `Job`インターフェースに`privacyMode: boolean`フィールドを追加。
+- `BatchState`インターフェースに`privacyMode: boolean`フィールドを追加。
+- `BackgroundFormat`型が`json`を除外（バックグラウンドモードでのjsonはサポートされず`text`にフォールバック）。
 
 ---
 
-## 予定 — Bunへの移行
+## 予定 — v2.4.0：Bunへの移行
 
-プライバシーアーキテクチャが完成した後、v2.3.0の機能追加前に、ランタイムをNode.jsから[Bun](https://bun.sh)に移行します。
+ランタイムをNode.jsから[Bun](https://bun.sh)に移行します。
 
 Claude Desktopはセッション起動のたびにMCPサーバーを新しく生成するため、起動時間はクリティカルパスにあります。BunはTypeScriptをネイティブにコンパイルステップなしで実行し、Node.jsより大幅に高速に起動し、I/Oも高速です。
 
 **変更点：**
-- `tsc`のビルドステップと`dist/`ディレクトリを完全に削除
+- `tsc`のビルドステップと`dist/`ディレクトリを削除
 - ユーザーがTypeScriptソースを直接実行
 - `tsconfig.json`がオプション化
 - `package.json`スクリプトを更新
@@ -167,30 +138,25 @@ Claude Desktopはセッション起動のたびにMCPサーバーを新しく生
 - すべてのツールの動作と出力形式
 - エンドユーザーのClaude Desktop設定
 
-**プライバシー対応後、v2.3.0より前に移行する理由：** コードベースは今が最も移行しやすい状態です。ツールを追加した後では移行の作業量が増えるだけでメリットはありません。プライバシーアーキテクチャは前述の通り先行してリリースする必要があります。
+---
+
+## 予定 — v2.5.0：外部ツール連携向け拡張出力フォーマット
+
+下流の分析と連携ワークフローを対象とした拡張出力フォーマットサポート。正確なスコープはv2.3.0後のユーザーフィードバックに基づいて定義予定。
 
 ---
 
-## ライセンス
+## 予定 — v2.6.0：ライブマイク文字起こしモード
 
-whisper-windows-mcpはデュアルライセンスを採用しています。
+ライブマイク入力からのリアルタイム文字起こし。選択した録音デバイスからの音声をチャンクでwhisperにストリーミングし、完了したセグメントをローリングトランスクリプトとして返す。
 
-**非商用利用：** MIT — 個人・教育・非商用目的での利用は無償です。[LICENSE](LICENSE)をご参照ください。
+**設計制約：**
+- デバイス選択は明示的であること — サイレントなデフォルトデバイスのキャプチャは不可
+- Claude Desktopの操作でストリームを停止できること
+- 1つのwhisperインスタンスという制約と競合しないこと
+- レイテンシと精度のトレードオフはユーザーが設定可能であること
 
-**商用利用：** ビジネス・業務・収益を生む用途には別途商用ライセンス契約が必要です。条件と連絡先は[LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)をご参照ください。
-
-規制産業向けの`WHISPER_PRIVACY_MODE`は将来のリリースで提供予定です。現時点での規制対象コンテンツのワークフローについては[PRIVACY.md](PRIVACY.md)をご参照ください。
-
-## 予定 — v2.3.0：出力フォーマットの拡張
-
-### VTT字幕フォーマット
-SRTに加えてWebVTT（`.vtt`）出力をサポート。VTTはYouTube、HTML5 `<video>`、ほとんどの現代的なプレーヤーで使用されるウェブ標準です。whisper-cliはネイティブにサポートしています。`transcribe_audio`、`generate_subtitles`、`spawnDetached`に`vtt`を有効な出力フォーマットとして追加。`buildArgs`と関連するすべてのツールスキーマ、README、日本語ドキュメントを更新します。
-
-### LRCフォーマット
-`-olrc`によるLRC（`.lrc`）歌詞/カラオケフォーマット出力。メディアプレーヤーによる同期歌詞表示に使用されます。ニッチなユースケースですが実装コストはゼロ — ネイティブCLIフラグです。
-
-### CSVフォーマット
-`-ocsv`によるCSV（`.csv`）出力。セグメントタイミング付きの構造化表形式データ — 下流分析、クリップ位置合わせワークフロー、スプレッドシートツールへのインポートに有用です。実装コストはゼロ — ネイティブCLIフラグです。
+**状況：** 設計フェーズ。whisper.cppの安定したストリーミングAPIに依存。
 
 ---
 
@@ -225,7 +191,7 @@ yt-dlp経由でYouTube URLから直接文字起こし。音声のダウンロー
 ### 話者識別（pyannote-audio）
 話者IDラベル付きの完全なモノラル話者識別 — チャンネル構成に関わらず、録音全体の話者の切り替えをマークします。組み込みの`--diarize`ステレオフラグ（v2.2.0）およびTinyDiarizeとは異なります。
 
-**実装：** [pyannote-audio](https://github.com/pyannote/pyannote-audio)が必要 — Hugging Faceモデルアクセストークンが必要なPythonベースのライブラリ。whisper.cppパイプラインとは完全に別の依存関係スタック。
+**実装：** [pyannote-audio](https://github.com/pyannote/pyannote-audio)が必要 — Hugging Faceモデルアクセストークンが必要なPythonベースのライブラリ。完全に別の依存関係スタック。
 
 **状況：** 独自のセットアップドキュメントを持つオプションの高度機能として計画中。メインパッケージには含めません。
 
@@ -247,48 +213,43 @@ Whisperの`--translate`フラグは英語のみを対象としています。任
 
 ---
 
+## ライセンス
+
+whisper-windows-mcpはデュアルライセンスを採用しています。
+
+**非商用利用：** MIT — 個人・教育・非商用目的での利用は無償です。[LICENSE](LICENSE)をご参照ください。
+
+**商用利用：** ビジネス・業務・収益を生む用途には別途商用ライセンス契約が必要です。条件と連絡先は[COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)をご参照ください。
+
+---
+
 ## 配信
 
-[npm](https://www.npmjs.com/package/whisper-windows-mcp)、[mcpservers.org](https://mcpservers.org)、[Glama](https://glama.ai)で公開中。
+[npm](https://www.npmjs.com/package/whisper-windows-mcp)、[mcpservers.org](https://mcpservers.org)、[Glama](https://glama.ai)、および[awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers)（PRサブミット済み）で公開中。
 
 ---
 
 ## 多言語ドキュメント
 
-日本語および韓国語ドキュメントは英語と並行して管理されます。各リリース後に英語ドキュメントに合わせて以下のファイルを更新する必要があります：
+各リリース後に英語ドキュメントに合わせて以下のファイルを更新する必要があります：
 
-**日本語 (`*.ja.md`)**
-- `README.ja.md`
-- `TROUBLESHOOTING.ja.md`
-- `ROADMAP.ja.md`
-- `PRIVACY.ja.md`
-- `SECURITY.ja.md`
+**日本語 (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
-**韓国語 (`*.ko.md`)**
-- `README.ko.md`
-- `TROUBLESHOOTING.ko.md`
-- `ROADMAP.ko.md`
-- `PRIVACY.ko.md`
-- `SECURITY.ko.md`
+**韓国語 (`*.ko.md`)** — `README.ko.md` / `TROUBLESHOOTING.ko.md` / `ROADMAP.ko.md` / `PRIVACY.ko.md` / `SECURITY.ko.md`
 
-**ベトナム語 (`*.vi.md`)**
-- `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
+**ベトナム語 (`*.vi.md`)** — `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
 
-**インドネシア語 (`*.id.md`)**
-- `README.id.md` / `TROUBLESHOOTING.id.md` / `ROADMAP.id.md` / `PRIVACY.id.md` / `SECURITY.id.md`
+**インドネシア語 (`*.id.md`)** — `README.id.md` / `TROUBLESHOOTING.id.md` / `ROADMAP.id.md` / `PRIVACY.id.md` / `SECURITY.id.md`
 
-**ウクライナ語 (`*.uk.md`)**
-- `README.uk.md` / `TROUBLESHOOTING.uk.md` / `ROADMAP.uk.md` / `PRIVACY.uk.md` / `SECURITY.uk.md`
+**ウクライナ語 (`*.uk.md`)** — `README.uk.md` / `TROUBLESHOOTING.uk.md` / `ROADMAP.uk.md` / `PRIVACY.uk.md` / `SECURITY.uk.md`
 
-**ブラジルポルトガル語 (`*.pt-BR.md`)**
-- `README.pt-BR.md` / `TROUBLESHOOTING.pt-BR.md` / `ROADMAP.pt-BR.md` / `PRIVACY.pt-BR.md` / `SECURITY.pt-BR.md`
+**ブラジルポルトガル語 (`*.pt-BR.md`)** — `README.pt-BR.md` / `TROUBLESHOOTING.pt-BR.md` / `ROADMAP.pt-BR.md` / `PRIVACY.pt-BR.md` / `SECURITY.pt-BR.md`
 
-**スペイン語 (`*.es.md`)**
-- `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
+**スペイン語 (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
-**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+**ポーランド語 (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
 
-**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+**ルーマニア語 (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
 
 他の言語へのコミュニティ貢献を歓迎します。
 

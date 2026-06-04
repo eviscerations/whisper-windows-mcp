@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Roadmap
 
-Versão atual: **v2.2.0**
+Versão atual: **v2.3.0**
 
 ---
 
@@ -54,143 +54,109 @@ Arquitetura de processo desanexado: `transcribe_audio` com `background=true` cri
 ### ✅ v2.0.0 — Caminhos seguros para Unicode + SRT em segundo plano
 **Nomes de arquivo Unicode:** Arquivos com caracteres não-ASCII nos nomes causavam falha silenciosa na transcrição em segundo plano. Corrigido roteando toda a saída por um caminho temporário sanitizado baseado em ID de tarefa, depois movendo o resultado para o destino correto após a conclusão.
 
-**SRT no modo em segundo plano:** `spawnDetached` anteriormente codificava rigidamente `-otxt` independentemente do formato solicitado, e `generate_subtitles` bloqueava de forma síncrona e atingia o timeout MCP de 4 minutos em arquivos mais longos. Corrigido adicionando parâmetro `outputFormat` ao `spawnDetached`, suportando saída `text` e `srt` no modo em segundo plano.
+**SRT no modo em segundo plano:** `spawnDetached` anteriormente codificava rigidamente `-otxt` independentemente do formato solicitado. Corrigido adicionando parâmetro `outputFormat` ao `spawnDetached`, suportando saída `text` e `srt` no modo em segundo plano.
 
 ### ✅ v2.0.1 — Correções de bugs (incluído no v2.2.0)
-- `--max-context 0` fixo em `buildArgs` e `spawnDetached` — previne loops de alucinação em áudio longo. `--condition-on-previous-text` e `--no-context` não são flags válidos no binário atual (era v1.8.3) — `--max-context N` é o flag correto.
+- `--max-context 0` fixo em `buildArgs` e `spawnDetached` — previne loops de alucinação em áudio longo.
 - `--no-speech-thold 0.6` fixo em ambas as funções — segmentos abaixo do limiar de confiança são tratados como silêncio em vez de conteúdo alucinado.
 - Validação de caminho (`validateInputPath`) — rejeita caminhos UNC e travessias `..`.
 - Proteção de tamanho de arquivo `MAX_FILE_SIZE_MB = 10240`.
 - Comentário de segurança de injeção de transcrição em `transcribeSingle`.
-- Comando CLI de lote corrigido no TROUBLESHOOTING.md — documentado o método correto de pré-conversão do FFmpeg e o método `Start-Process -RedirectStandardOutput`.
+- Comando CLI de lote corrigido no TROUBLESHOOTING.md.
 
 ### ✅ v2.1.0 — Suite de gerenciamento de modelos (incluído no v2.2.0)
 - `WHISPER_MODEL` alterado de `const` para `let` (mutável dentro da sessão).
 - `MODEL_REGISTRY` — 16 modelos, variantes de precisão total e quantizadas, URLs de download do Hugging Face.
 - `ALLOWED_HF_PREFIXES` — lista de permissões de URL que limita downloads aos namespaces `ggerganov/whisper.cpp` e `ggml-org`.
 - Ferramenta `list_models` — varre o diretório de modelos, mostra o modelo ativo, tamanhos, casos de uso, downloads disponíveis.
-- Ferramenta `download_model` — baixa do Hugging Face via `https` integrado do Node.js, renomeação atômica (corrige condição de corrida de liberação de handle de arquivo do Windows).
+- Ferramenta `download_model` — baixa do Hugging Face via `https` integrado do Node.js, renomeação atômica.
 - Ferramenta `switch_model` — valida extensão `.bin`, restrição de diretório, verificação de bloqueio de processo.
 - `recommendedModel()` atualizado para recomendar `large-v3-turbo` para VRAM de 6GB+.
 
-### ✅ v2.2.0 — Expansão de qualidade, parâmetros e hardware (atual)
+### ✅ v2.2.0 — Expansão de qualidade, parâmetros e hardware
 - Interface `WhisperOptions` substituindo argumentos posicionais em `buildArgs`.
 - Novos parâmetros em `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - Novos parâmetros em `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
 - `spawnDetached` refatorado — todos os flags de qualidade agora são aplicados no modo em segundo plano/lote.
-- `runSrtPass` atualizado para aceitar `extraOpts`.
-- Saída de lote corrigida — `readBatchProgress` agora move a saída temporária para o destino final antes de validar (esta era a causa raiz de todos os resultados de lote "com falha").
+- Saída de lote corrigida — `readBatchProgress` agora move a saída temporária para o destino final antes de validar.
 
-**Nota de compatibilidade de flags:** `gpu_device` / `-g` foi adicionado no whisper.cpp v1.8.4. O binário Vulkan pré-compilado nos releases é da era v1.8.3 — este parâmetro é aceito pela ferramenta mas não terá efeito até que os usuários atualizem para binários v1.8.4+.
+**Nota de compatibilidade de flags:** `gpu_device` / `--device` foi adicionado no whisper.cpp v1.8.4. Os binários Vulkan pré-compilados nos releases são da era v1.8.3 — este parâmetro é aceito pela ferramenta mas não terá efeito até que os usuários atualizem para binários v1.8.4+.
 
-**Flags válidos confirmados no binário atual (era v1.8.3):**
-`--max-context`, `--no-speech-thold`, `--processors`, `--offset-t`, `--duration`, `--best-of`, `--beam-size`, `--diarize`, `--tinydiarize`, `--temperature`, `--prompt`, flags VAD.
+### ✅ v2.2.2 — Patch
+- Correção de licença dual — revisão de LICENSE e LICENSE-COMMERCIAL.md.
+- Correções menores de documentação.
 
-**Ausentes no binário atual:** `--no-context` (use `--max-context 0`), `--condition-on-previous-text` (apenas nome da API Python), `--gpu-device` / `-g` (v1.8.4+).
+### ✅ v2.3.0 — Avanço automático de lote, arquitetura de privacidade, expansão de formatos de saída
 
----
+**Avanço automático de lote (correção de bug crítico):** `start_batch` antes exigia polling ativo para avançar a fila. Agora cada processo filho whisper-cli criado tem um handler `on('exit')` anexado. Quando o processo termina, o lote avança imediatamente de forma autônoma através do callback de saída — sem custo de polling nem chamadas de API. Um mutex previne a criação dupla entre o handler de saída e chamadas simultâneas a `check_batch_progress`.
 
-## Bug crítico — Avanço automático do lote (confirmado, aguardando correção)
+**Arquitetura de privacidade:**
+- Variável de ambiente `WHISPER_PRIVACY_MODE` — quando definida como `true`, todas as respostas das ferramentas retornam apenas metadados (nome do arquivo, contagem de palavras, caminho de salvamento). Nenhum texto de transcrição é enviado à API do Claude. As transcrições existem apenas como arquivos locais.
+- Variável de ambiente `WHISPER_CONSENT_ACKNOWLEDGED` — quando definida como `true`, suprime a porta de consentimento única por sessão para conteúdo não sensível.
+- Parâmetro `privacy_mode` por chamada em `transcribe_audio`, `transcribe_batch`, `start_batch`, `check_progress`. Substitui a variável de ambiente global em ambas as direções. Não requer reinicialização para ativar/desativar.
+- Porta do modo de privacidade (`checkPrivacyGate()`) — executada antes de cada operação quando o modo de privacidade efetivo está ativo. Primeira chamada ativa (exibe divulgação), segunda chamada libera (permite). Reinicia após cada operação. Completamente independente da porta de consentimento de sessão.
+- Porta de consentimento de sessão (`transcriptPolicy()`) — executada uma vez por sessão antes da primeira chamada que retorne transcrição no modo padrão. Consumida pelo flag `sessionConsentGiven`.
+- `PRIVACY.md` — documentação de conformidade completa cobrindo HIPAA, GDPR, privilégio advogado-cliente, FERPA, SOX, PCI-DSS, NDA/segredo comercial.
+- Avisos de privacidade nas descrições de ferramentas de todas as ferramentas que retornam texto de transcrição.
 
-### Lote não avança sem polling ativo
+**Expansão de formatos de saída:**
+- `vtt` — saída de legenda WebVTT via `-ovtt`. Disponível em `transcribe_audio`, `generate_subtitles`, `start_batch` e modo em segundo plano.
+- `lrc` — formato de letras/karaokê LRC via `-olrc`. Disponível em `transcribe_audio` e modo em segundo plano.
+- `csv` — CSV com carimbos de tempo via `-ocsv`. Disponível em `transcribe_audio` e modo em segundo plano.
+- O valor padrão de `output_format` muda de `"text"` para `"timestamps"` em todas as ferramentas e caminhos de código. Texto simples agora é opcional.
 
-`start_batch` não avança a fila autonomamente entre os arquivos. O lote só avança quando `check_batch_progress` é chamado. Sem polling, o lote fica parado indefinidamente após cada arquivo — o whisper-cli.exe sai, nenhum novo processo é criado e a fila não avança.
+**Correções de bugs:**
+- Bug 1: `output_format` não era passado para tarefas em segundo plano — `"text"` padrão era usado independentemente do formato solicitado. Corrigido mudando o padrão para `"timestamps"` e passando corretamente.
+- Bug 2: `catch {}` silencioso na operação de movimentação de saída de tarefa em segundo plano engolia falhas. Adicionada verificação `existsSync` explícita após a movimentação com mensagem de falha detalhada.
+- Bug 3: Adicionado comentário de design no ponto de criação em segundo plano explicando por que a porta de consentimento é adiada intencionalmente para `check_progress` para tarefas em segundo plano não privadas.
 
-Isso destrói o objetivo de design central de processamento em lote autônomo durante a noite e viola diretamente o princípio de design de minimizar chamadas à API do Claude. Um lote de 95 clipes curtos exigiu cerca de 200 chamadas de polling ao longo de 100 minutos para ser concluído.
-
-**Causa raiz:** `readBatchProgress` contém toda a lógica de avanço de fila. Ele só é executado quando `check_batch_progress` é chamado explicitamente. Não há timer em segundo plano, observador de arquivo ou loop autônomo.
-
-**Correção planejada — Opção B (callback de saída, fortemente preferido):** Attach de um handler `on('exit')` ao processo filho whisper-cli criado. Quando o processo sair, imediatamente chamar a lógica de avanço para validar a saída e criar a próxima tarefa. Baseado em eventos, disparado exatamente uma vez por conclusão de arquivo, sem overhead de polling, sem chamadas de API consumidas.
-
-**Opção A (somente fallback):** `setInterval` em segundo plano com intervalo de polling baseado em duração derivado dos dados de duração do FFprobe já presentes no JSON de estado do lote. O tamanho do arquivo não é um substituto confiável para a duração.
-
-**Restrição adicional:** A correção não deve criar um segundo whisper-cli.exe quando um já está em execução — o bloqueio de processo deve ser respeitado no caminho de avanço automático.
-
-**Solução alternativa (atual):** Chame `check_batch_progress` repetidamente até que o lote seja concluído. Cerca de um polling por arquivo é necessário.
-
----
-
-## Planejado — Arquitetura de Privacidade (antes da migração para o Bun)
-
-Essas mudanças devem ser lançadas antes da migração para o Bun e antes de quaisquer mudanças de licença que facilitem a adoção comercial ou empresarial. Lançar uma ferramenta de nível empresarial sem proteções de conformidade resolvidas cria responsabilidade para usuários em setores regulamentados.
-
-### Variável de ambiente `WHISPER_PRIVACY_MODE`
-A ferramenta atualmente garante que nenhum **áudio** sai da máquina. Ela não estende essa garantia ao **texto de transcrição** — quando o conteúdo de transcrição é retornado inline em uma resposta de ferramenta, esse texto é processado pela API do Claude e sai do ambiente local.
-
-Essa lacuna é invisível para usuários que razoavelmente interpretam "nenhum dado sai da sua máquina" como cobrindo todo o conteúdo derivado do seu áudio.
-
-Adicionar `WHISPER_PRIVACY_MODE` como variável de ambiente em `claude_desktop_config.json`. Quando ativado:
-- Todas as respostas das ferramentas retornam apenas metadados: nome do arquivo, duração, contagem de palavras, status de conclusão
-- Nenhum texto de transcrição é incluído em qualquer resposta de ferramenta
-- O Claude não pode ler, analisar ou retransmitir conteúdo de transcrição de nenhuma forma
-- As transcrições existem apenas como arquivos `.txt` locais
-
-Esta é a configuração correta para implantações médicas, jurídicas, financeiras e corporativas. Zero chamadas de API, zero transmissão de dados, zero risco de conformidade.
-
-### Gateway de consentimento para conteúdo de transcrição
-Quando `WHISPER_PRIVACY_MODE` não está ativado (padrão), qualquer resposta de ferramenta que inclua texto de transcrição deve ser precedida de uma divulgação no primeiro uso por sessão. A divulgação deve comunicar claramente que o texto de transcrição é enviado à API da Anthropic, que isso está fora da garantia "nenhum dado sai da sua máquina", e que usuários que lidam com conteúdo regulamentado devem verificar suas obrigações de conformidade antes de prosseguir.
-
-Implementação: variável de ambiente `WHISPER_CONSENT_ACKNOWLEDGED` com padrão `false`. No primeiro retorno de transcrição por sessão, se não reconhecido, o Claude apresenta a divulgação e solicita confirmação explícita. Uma vez reconhecido para a sessão, as transcrições subsequentes são retornadas sem solicitar novamente.
-
-### Documentação `PRIVACY.md`
-Criar `PRIVACY.md` na raiz do repositório cobrindo:
-- Quais dados sempre ficam locais: arquivos de áudio, vídeo, modelos
-- Quais dados podem sair do local (por padrão): texto de transcrição em respostas de ferramentas
-- Quais dados nunca saem do local (com modo de privacidade): tudo
-- Orientação de framework de conformidade por setor (HIPAA, GDPR, privilégio advogado-cliente, FERPA, SOX, PCI-DSS, NDA/segredo comercial)
-- Como configurar o modo de privacidade
-- Isenção de responsabilidade de que os autores da ferramenta não são consultores jurídicos
-
-### Avisos de privacidade no esquema de ferramentas
-Atualizar as descrições de ferramentas `ListToolsRequestSchema` para incluir uma nota de privacidade em qualquer ferramenta que retorne texto de transcrição. Isso aparece nas descrições de ferramentas do Claude Desktop e cria consciência no ponto de uso.
-
-### Limpeza automática do diretório temporário
-`%TEMP%\whisper-mcp-jobs\` acumula arquivos de estado de tarefas e logs ao longo do tempo. Adicionar limpeza automática de arquivos de tarefas concluídas após uma janela de retenção configurável (padrão: 7 dias). Atualmente requer `Remove-Item` manual pelo usuário.
+**Adições:**
+- Limpeza automática do diretório temporário — `cleanupOldJobFiles()` é executado na inicialização e exclui arquivos `.json` e `.log` com mais de 7 dias em `%TEMP%\whisper-mcp-jobs\`.
+- `check_config` agora reporta o status do modo de privacidade.
+- O log de inicialização reporta modo de privacidade ativado/desativado.
+- Campo `privacyMode: boolean` adicionado à interface `Job`.
+- Campo `privacyMode: boolean` adicionado à interface `BatchState`.
+- O tipo `BackgroundFormat` exclui `json` (json no modo em segundo plano não é suportado — cai de volta para `text`).
 
 ---
 
-## Planejado — Migração para o Bun
+## Planejado — v2.4.0: Migração para Bun
 
-Migrar o runtime do Node.js para o [Bun](https://bun.sh) após a conclusão da arquitetura de privacidade e antes das adições de funcionalidades do v2.3.0.
+Migrar o runtime de Node.js para o [Bun](https://bun.sh).
 
-Como o Claude Desktop cria um novo servidor MCP a cada início de sessão, o tempo de inicialização está no caminho crítico. O Bun executa TypeScript nativamente sem etapa de compilação, inicia significativamente mais rápido que o Node e tem E/S mais rápida.
+O Claude Desktop cria um novo servidor MCP a cada início de sessão, portanto o tempo de inicialização está no caminho crítico. O Bun executa TypeScript nativamente sem etapa de compilação, inicia significativamente mais rápido que o Node e tem E/S mais rápida.
 
 **O que muda:**
-- Eliminação da etapa de build `tsc` e do diretório `dist/`
-- Os usuários executam o código TypeScript fonte diretamente
+- Etapa de compilação `tsc` e diretório `dist/` removidos
+- Os usuários executam o código-fonte TypeScript diretamente
 - `tsconfig.json` torna-se opcional
-- Scripts `package.json` atualizados
-- Fluxo de trabalho de publicação no npm atualizado
+- Scripts do `package.json` atualizados
+- Fluxo de publicação no npm atualizado
 
 **O que não muda:**
 - Código-fonte `src/index.ts` — o Bun é compatível com o TypeScript existente e as APIs integradas do Node.js
 - Todos os comportamentos de ferramentas e formatos de saída
 - Configuração do Claude Desktop para usuários finais
 
-**Por que após a privacidade, antes do v2.3.0:** O código-fonte está em seu estado mais fácil de migrar agora. Migrar após adicionar mais ferramentas apenas aumenta a área de superfície sem benefício. A arquitetura de privacidade deve ser lançada primeiro conforme observado acima.
+---
+
+## Planejado — v2.5.0: Formatos de saída aprimorados para integração com ferramentas externas
+
+Suporte expandido de formatos de saída voltado para fluxos de trabalho de análise e integração downstream. O escopo exato será definido com base no feedback dos usuários após o v2.3.0.
 
 ---
 
-## Licenciamento
+## Planejado — v2.6.0: Modo de transcrição de microfone ao vivo
 
-whisper-windows-mcp usa licença dupla.
+Transcrição em tempo real a partir de entrada de microfone ao vivo. Transmite áudio em fragmentos do dispositivo de gravação selecionado para o whisper, retornando segmentos de transcrição concluídos de forma contínua.
 
-**Uso não comercial:** MIT — gratuito para uso pessoal, educacional e não comercial. Veja [LICENSE](LICENSE).
+**Restrições de design:**
+- A seleção do dispositivo deve ser explícita — sem captura silenciosa do microfone padrão
+- O usuário deve poder parar o stream através da interação com o Claude Desktop
+- Não deve violar a restrição de uma única instância do whisper por vez
+- O trade-off entre latência e precisão deve ser configurável pelo usuário
 
-**Uso comercial:** É necessário um contrato de licença comercial separado. Veja [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
-
-`WHISPER_PRIVACY_MODE` para implantações em setores regulamentados está em desenvolvimento e planejado para uma versão futura. Veja [PRIVACY.md](PRIVACY.md) para orientações atuais.
-
-## Planejado — v2.3.0: Expansão de formatos de saída
-
-### Formato de legenda VTT
-Saída WebVTT (`.vtt`) junto com SRT. VTT é o padrão web usado pelo YouTube, HTML5 `<video>` e a maioria dos players modernos. O whisper-cli o suporta nativamente. Adicionar `vtt` como formato de saída válido em `transcribe_audio`, `generate_subtitles` e `spawnDetached`. Atualizar `buildArgs` e todos os esquemas de ferramentas relevantes, README e documentação multilíngue.
-
-### Formato LRC
-Saída no formato LRC (`.lrc`) de letras/karaokê via `-olrc`. Usado por players de mídia para exibição sincronizada de letras. Custo de implementação zero — flag CLI nativo.
-
-### Formato CSV
-Saída CSV (`.csv`) via `-ocsv`. Dados tabulares estruturados com timing de segmentos — útil para análise downstream, fluxos de trabalho de alinhamento de clipes e importação em ferramentas de planilha. Custo de implementação zero — flag CLI nativo.
+**Status:** Fase de design. Depende de uma API de streaming estável do whisper.cpp.
 
 ---
 
@@ -225,7 +191,7 @@ Para usuários que gerenciam grandes projetos de edição de vídeo com diretór
 ### Diarização de falantes (pyannote-audio)
 Diarização de falantes mono completa com rótulos de ID de falante — marca transições de falantes em toda a gravação independentemente da configuração de canal. Diferente do flag `--diarize` estéreo integrado (v2.2.0) e do TinyDiarize.
 
-**Implementação:** Requer [pyannote-audio](https://github.com/pyannote/pyannote-audio) — biblioteca baseada em Python com requisito de token de acesso a modelos do Hugging Face. Pilha de dependências completamente separada do pipeline whisper.cpp.
+**Implementação:** Requer [pyannote-audio](https://github.com/pyannote/pyannote-audio) — biblioteca baseada em Python com requisito de token de acesso a modelos do Hugging Face. Pilha de dependências completamente separada.
 
 **Status:** Funcionalidade avançada opcional com sua própria documentação de configuração. Não incluída no pacote principal.
 
@@ -247,15 +213,25 @@ Pipeline de pós-processamento:
 
 ---
 
+## Licenciamento
+
+O whisper-windows-mcp usa licença dupla.
+
+**Uso não comercial:** MIT — gratuito para uso pessoal, educacional e não comercial. Veja [LICENSE](LICENSE).
+
+**Uso comercial:** É necessário um contrato de licença comercial separado para qualquer uso empresarial, profissional ou que gere receita. Veja [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+
+---
+
 ## Distribuição
 
-Disponível no [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org) e [Glama](https://glama.ai).
+Disponível no [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai) e [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) (PR enviado).
 
 ---
 
 ## Documentação multilíngue
 
-A documentação em japonês, coreano, vietnamita, indonésio, ucraniano, português brasileiro e espanhol é mantida em paralelo com o inglês. Os seguintes arquivos devem ser atualizados para corresponder aos documentos em inglês após cada release:
+Os seguintes arquivos devem ser atualizados para corresponder aos documentos em inglês após cada release:
 
 **Japonês (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
@@ -271,9 +247,9 @@ A documentação em japonês, coreano, vietnamita, indonésio, ucraniano, portug
 
 **Espanhol (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
-**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+**Polonês (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
 
-**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+**Romeno (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
 
 Contribuições da comunidade para outros idiomas são bem-vindas.
 

@@ -17,6 +17,7 @@ Once installed, you can say things like this directly in Claude Desktop:
 - *"Start a batch transcription of everything in this folder"*
 - *"How long will it take to transcribe these files?"*
 - *"Check if GPU acceleration is working"*
+- *"Transcribe this file in privacy mode"*
 
 ---
 
@@ -163,11 +164,12 @@ Transcribe a single file. Supports blocking (default) or background mode for lon
 |---|---|
 | `file_path` | Absolute path to the file (required) |
 | `language` | Language code (`en`, `ja`, `es`, etc.) or `auto` to detect. Default: `en` |
-| `output_format` | `text` (default), `timestamps`, `json`, or `srt` |
+| `output_format` | `timestamps` (default), `text`, `json`, `srt`, `vtt`, `lrc`, or `csv` |
 | `save_to_file` | Save transcript as .txt next to the source file |
 | `background` | Run as detached job — returns a job ID immediately. Use `check_progress` to monitor. Recommended for files over 10 minutes. |
+| `privacy_mode` | Override privacy mode for this call. `true` = metadata only, no transcript text transmitted. `false` = return text even if `WHISPER_PRIVACY_MODE=true` globally. Omit to use global setting. |
 | `threads` | CPU thread override |
-| `temperature` | Sampling temperature 0.0–1.0. Default 0.0 (deterministic). Higher values reduce hallucination on noisy audio. |
+| `temperature` | Sampling temperature 0.0–1.0. Default 0.0 (deterministic). |
 | `prompt` | Prior context string — improves accuracy for domain-specific vocabulary or speaker names. Example: `"Names: Keemstar, DramaAlert."` |
 | `condition_on_prev_text` | Re-enable context conditioning between segments. Default false. |
 | `beam_size` | Beam search width. Higher = more accurate, slower. Default 5. |
@@ -181,32 +183,44 @@ Transcribe a single file. Supports blocking (default) or background mode for lon
 | `offset_t` | Start offset in milliseconds. |
 | `duration` | Process duration in milliseconds from offset. |
 
+**Output formats:**
+- `timestamps` — timestamped segments, e.g. `[00:00:01.230 --> 00:00:04.560]  Hello world` (default)
+- `text` — plain text, no time codes
+- `json` — structured JSON (blocking mode only)
+- `srt` — SubRip subtitle file saved next to source
+- `vtt` — WebVTT subtitle file saved next to source
+- `lrc` — LRC lyrics/karaoke format saved next to source
+- `csv` — CSV with timestamps saved next to source
+
 ---
 
 ### `check_progress`
 Monitor a background transcription job started with `transcribe_audio` (background=true).
 
-Returns elapsed time, last processed timestamp, percentage, and the full transcript when complete.
+Returns elapsed time, last processed timestamp, and the full transcript when complete.
 
 | Parameter | Description |
 |---|---|
 | `job_id` | Job ID returned by `transcribe_audio` |
+| `privacy_mode` | Override privacy mode for this check. `true` = metadata only, regardless of how the job was started. |
 
 ---
 
 ### `start_batch`
-Automated sequential batch transcription of all untranscribed files in a folder. Sorts by duration (shortest first), processes one at a time as background jobs, validates each output.
+Automated sequential batch transcription of all untranscribed files in a folder. Sorts by duration (shortest first), processes one at a time as background jobs, validates each output. Batch self-advances when each file finishes — no polling required.
 
 | Parameter | Description |
 |---|---|
 | `folder_path` | Path to folder (required) |
 | `language` | Language code. Default: `en` |
 | `threads` | CPU thread override |
+| `output_format` | `timestamps` (default) or `text` |
+| `privacy_mode` | Override privacy mode. One confirmation required before batch start; all files then process unattended. No transcript text returned. |
 
 ---
 
 ### `check_batch_progress`
-Monitor a running batch. Automatically advances to the next file when the current one finishes. Returns overall progress, current file with timestamp, ETA, and any failed files.
+Monitor a running batch. Automatically advances to the next file when the current one finishes. Returns overall progress, current file with timestamp, and any failed files.
 
 | Parameter | Description |
 |---|---|
@@ -223,24 +237,28 @@ Process files one at a time with a preview and confirmation before each. Useful 
 | `file_index` | Which file to process (1-based). Omit to list files first. |
 | `language` | Language code. Default: `en` |
 | `recursive` | Include subfolders |
+| `output_format` | `timestamps` (default) or `text` |
+| `privacy_mode` | Override privacy mode. Confirmation required before each file; metadata only returned. |
 
 ---
 
 ### `generate_subtitles`
-Generate SRT subtitle files. Supports automatic language detection and English translation output.
+Generate subtitle files. Supports automatic language detection and English translation output. Outputs SRT (widest compatibility) or WebVTT (web and HTML5 video).
 
 | Parameter | Description |
 |---|---|
 | `file_path` | Path to file (required) |
 | `language` | Language code or `auto` to detect. Default: `en` |
-| `translate_to_english` | Also generate an English translation `.en.srt`. Only applies when source is not English. |
+| `output_format` | `srt` (default) or `vtt` |
+| `translate_to_english` | Also generate an English translation subtitle file. Only applies when source is not English. |
+| `background` | Run as detached background job. Returns a job ID for `check_progress`. |
 | `threads` | CPU thread override |
 
 When both native and translation are requested, two files are saved next to the source:
 - `filename.ja.srt` — original language
 - `filename.en.srt` — English translation
 
-> Whisper's built-in translation only translates **to English**. For other target languages, translate the .srt file contents separately.
+> Whisper's built-in translation only translates **to English**. For other target languages, translate the subtitle file contents separately.
 
 ---
 
@@ -265,7 +283,7 @@ List all Whisper model files installed in your models directory. Shows filename,
 ---
 
 ### `download_model`
-Download a Whisper model directly from Hugging Face into your models directory. Accepts a model name (e.g. `large-v3-turbo`, `medium.en-q5_0`) and handles the download automatically. Only downloads from trusted Hugging Face namespaces. After downloading, use `switch_model` to activate it.
+Download a Whisper model directly from Hugging Face into your models directory. Only downloads from trusted Hugging Face namespaces. After downloading, use `switch_model` to activate it.
 
 | Parameter | Description |
 |---|---|
@@ -301,14 +319,16 @@ Detect GPU hardware and verify Vulkan acceleration is available. Reports GPU nam
 
 The pre-built Vulkan release enables GPU acceleration automatically. Tested on AMD Radeon RX Vega 56 (GCN 5th gen). Any GPU with Vulkan 1.0+ support should work, including NVIDIA and Intel Arc.
 
-**Performance comparison (medium.en model, ~5 minute audio file):**
+**Performance comparison (large-v3 model, ~14 minute audio file):**
 
 | Hardware | Time |
 |---|---|
-| CPU only (Ryzen 7 2700x, 8 threads) | 8–12 minutes |
-| GPU (Vega 56 via Vulkan) | 20–40 seconds |
+| CPU only (Ryzen 7 2700x, 8 threads) | ~22 minutes (estimated) |
+| GPU (Vega 56 via Vulkan) | ~3m 22s |
 
-GPU utilization during transcription is typically 15–20%, dropping back to idle between files. CPU stays around 15%.
+GPU utilization during transcription is typically 15–20%, dropping back to idle between files.
+
+Supports Windows 10 and Windows 11. No Windows 11-specific configuration is required — the tool makes no Win32 API calls and runs on either OS.
 
 ---
 
@@ -320,9 +340,25 @@ For best multilingual accuracy, use the `large-v3` model. English-specific model
 
 **Example — foreign language video with subtitles:**
 1. Ask Claude to generate subtitles with `language=auto` and `translate_to_english=true`
-2. Whisper detects the language and generates a native-language SRT
-3. A second pass generates an English translation SRT
-4. Load either file in VLC via Subtitle → Add Subtitle File
+2. Whisper detects the language and generates a native-language SRT or VTT
+3. A second pass generates an English translation
+4. Load the SRT in VLC via Subtitle → Add Subtitle File, or use the VTT in any web player
+
+---
+
+## Privacy and compliance
+
+whisper-windows-mcp includes a built-in privacy architecture for sensitive and regulated content.
+
+**Audio and video never leave your machine.** This guarantee is unconditional.
+
+**Transcript text** is different — when returned inline in a tool response, it is processed by Claude's API. For most users this is expected behavior. For regulated content (medical, legal, financial, corporate), privacy mode prevents this.
+
+**Privacy mode** restricts all tool responses to metadata only (filename, word count, save path). No transcript text is transmitted to Claude's API under any circumstances. Enable per-call with `privacy_mode=true` on any transcription tool, or globally via `WHISPER_PRIVACY_MODE=true` in your config.
+
+**Consent gate** — on first use per session in standard mode, a full privacy disclosure is shown before any transcript text is returned. You must explicitly confirm before proceeding. Set `WHISPER_CONSENT_ACKNOWLEDGED=true` in your config to skip this for non-sensitive content.
+
+See [PRIVACY.md](PRIVACY.md) for full compliance guidance (HIPAA, GDPR, attorney-client privilege, FERPA, SOX, PCI-DSS).
 
 ---
 
@@ -340,7 +376,30 @@ This tool is built to minimize Claude API interactions. The entire transcription
 | `WHISPER_MODEL` | Path to model .bin file (required) |
 | `WHISPER_THREADS` | CPU thread count override |
 | `FFMPEG_PATH` | Path to ffmpeg if not in system PATH |
-| `WHISPER_PRIVACY_MODE` | **Planned.** When set to `true`, tool responses return metadata only — no transcript text is returned to Claude's API. For regulated or confidential content. See [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_PRIVACY_MODE` | When `true`, all tool responses return metadata only — no transcript text transmitted to Claude's API. For regulated or confidential content. Can be overridden per-call with the `privacy_mode` parameter. See [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_CONSENT_ACKNOWLEDGED` | When `true`, skips the one-time session consent disclosure shown before transcript text is returned. Set after you understand the privacy boundary and no longer need the reminder. Has no effect when privacy mode is active. |
+
+---
+
+## Security
+
+**Binary verification.** To verify the integrity of the whisper-cli.exe binary in the pre-built release, check its SHA256 hash in PowerShell:
+
+```powershell
+Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
+```
+
+The expected hash for the v1.4.0 release binary is documented in the [releases page](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
+
+**Input validation.** All file paths are validated before use — UNC paths (`\\server\share`) and directory traversal sequences (`..`) are rejected. Files over 10 GB are rejected to prevent resource exhaustion.
+
+**Transcript injection awareness.** Audio files can contain spoken content that, when transcribed, resembles instructions. Claude's built-in defenses handle this, but it is worth knowing that transcript content is treated as data — never as instructions — by the MCP server itself.
+
+**Model downloads are restricted.** The `download_model` tool only downloads from two trusted Hugging Face namespaces (`ggerganov/whisper.cpp` and `ggml-org`). Arbitrary URLs are rejected. Redirects are validated against an allowlist before following.
+
+**Model switching is sandboxed.** `switch_model` only accepts `.bin` files within the configured models directory. Paths outside that directory are rejected.
+
+See [SECURITY.md](SECURITY.md) for the full security policy.
 
 ---
 
@@ -358,33 +417,11 @@ Quick checklist:
 
 ---
 
-## Security and Privacy
-
-whisper-windows-mcp is designed with security as a core principle.
-
-**Audio never leaves your machine.** No audio or video files, no file paths, and no telemetry are ever transmitted to any server. No cloud APIs are required for core functionality.
-
-**Transcript text and the API boundary.** When a tool response includes transcript text, that text is processed by Claude's API — it leaves your local machine. For most users (public content, podcasts, streaming recordings) this is expected behavior. If you handle medical, legal, financial, or other regulated recordings, see [PRIVACY.md](PRIVACY.md) for compliance guidance and configuration options.
-
-A `WHISPER_PRIVACY_MODE` environment variable is planned that will restrict all tool responses to metadata only (filename, duration, word count) — no transcript text will be returned to Claude. This is the correct configuration for regulated or confidential content.
-
-**Input validation.** All file paths are validated before use — UNC paths (`\\server\share`) and directory traversal sequences (`..`) are rejected. Files over 10 GB are rejected to prevent resource exhaustion.
-
-**Transcript injection awareness.** Audio files can contain spoken content that, when transcribed, resembles instructions. Claude's built-in defenses handle this, but it is worth knowing that transcript content is treated as data — never as instructions — by the MCP server itself.
-
-**Model downloads are restricted.** The `download_model` tool only downloads from two trusted Hugging Face namespaces (`ggerganov/whisper.cpp` and `ggml-org`). Arbitrary URLs are rejected. Redirects are validated against an allowlist before following.
-
-**Model switching is sandboxed.** `switch_model` only accepts `.bin` files within the configured models directory. Paths outside that directory are rejected.
-
-**No new network dependencies.** Model downloads use Node.js built-in `https` — no external HTTP libraries are added to the package.
-
----
-
 ## License
 
 **Non-commercial use:** MIT — free for personal, educational, and non-commercial use. See [LICENSE](LICENSE).
 
-**Commercial use:** A separate commercial license is required for any business, professional, or revenue-generating use. See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for terms and contact information.
+**Commercial use:** A separate commercial license is required for any business, professional, or revenue-generating use. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for terms and contact information.
 
 ## Contributing
 

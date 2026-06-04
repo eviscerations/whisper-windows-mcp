@@ -1,6 +1,6 @@
 # whisper-windows-mcp — 로드맵
 
-현재 버전: **v2.2.0**
+현재 버전: **v2.3.0**
 
 ---
 
@@ -54,104 +54,75 @@ FFprobe를 사용한 `analyze_media` 도구: 재생 시간, 크기, 코덱, 전�
 ### ✅ v2.0.0 — Unicode 안전 경로 + 백그라운드 SRT
 **Unicode 파일명:** 파일명에 비ASCII 문자가 있는 경우 백그라운드 전사가 조용히 실패하던 문제 수정. 모든 출력을 정제된 작업 ID 기반 임시 경로를 통해 라우팅하고 완료 후 올바른 목적지로 이동하도록 변경.
 
-**백그라운드 모드 SRT:** `spawnDetached`가 요청된 포맷에 관계없이 `-otxt`를 하드코딩했으며, `generate_subtitles`가 긴 파일에서 MCP 타임아웃에 걸리도록 동기적으로 블로킹하던 문제 수정. `spawnDetached`에 `outputFormat` 파라미터를 추가하여 백그라운드 모드에서 `text` 및 `srt` 출력 지원.
+**백그라운드 모드 SRT:** `spawnDetached`가 요청된 포맷에 관계없이 `-otxt`를 하드코딩하던 문제 수정. `spawnDetached`에 `outputFormat` 파라미터를 추가하여 백그라운드 모드에서 `text` 및 `srt` 출력 지원.
 
 ### ✅ v2.0.1 — 버그 수정 (v2.2.0에 포함)
-- `buildArgs`와 `spawnDetached` 모두에 `--max-context 0` 하드코딩 — 장시간 음성에서 환각 루프 방지. 현재 바이너리(v1.8.3 세대)에서 `--condition-on-previous-text`와 `--no-context`는 유효한 플래그가 아님 — `--max-context N`이 올바른 플래그.
+- `buildArgs`와 `spawnDetached` 모두에 `--max-context 0` 하드코딩 — 장시간 음성에서 환각 루프 방지.
 - 양 함수에 `--no-speech-thold 0.6` 하드코딩 — 신뢰도 임계값 미만의 세그먼트를 환각된 콘텐츠 대신 무음으로 처리.
 - 경로 검증(`validateInputPath`) — UNC 경로 및 `..` 탐색 거부.
 - `MAX_FILE_SIZE_MB = 10240` 파일 크기 가드.
 - `transcribeSingle`에 전사 인젝션 보안 주석 추가.
-- TROUBLESHOOTING.md에서 손상된 CLI 배치 명령 수정 — 올바른 FFmpeg 사전 변환 방식과 `Start-Process -RedirectStandardOutput` 방법 문서화.
+- TROUBLESHOOTING.md에서 손상된 CLI 배치 명령 수정.
 
 ### ✅ v2.1.0 — 모델 관리 스위트 (v2.2.0에 포함)
 - `WHISPER_MODEL`을 `const`에서 `let`으로 변경 (세션 변경 가능).
 - `MODEL_REGISTRY` — 16개 모델, 전체 정밀도 및 양자화 변형, Hugging Face 다운로드 URL.
 - `ALLOWED_HF_PREFIXES` — 다운로드를 `ggerganov/whisper.cpp` 및 `ggml-org` 네임스페이스로 제한하는 URL 허용 목록.
 - `list_models` 도구 — 모델 디렉터리 스캔, 활성 모델, 크기, 사용 사례, 사용 가능한 다운로드 표시.
-- `download_model` 도구 — Node.js 내장 `https`를 통해 Hugging Face에서 다운로드, 원자적 이름 변경 (Windows 파일 핸들 해제 경쟁 조건 수정).
+- `download_model` 도구 — Node.js 내장 `https`를 통해 Hugging Face에서 다운로드, 원자적 이름 변경.
 - `switch_model` 도구 — `.bin` 확장자 검증, 디렉터리 제약, 프로세스 잠금 확인.
 - `recommendedModel()` 업데이트 — 6GB 이상 VRAM에서 `large-v3-turbo` 권장.
 
-### ✅ v2.2.0 — 품질, 파라미터, 하드웨어 확장 (현재)
+### ✅ v2.2.0 — 품질, 파라미터, 하드웨어 확장
 - `buildArgs`의 위치 인수를 대체하는 `WhisperOptions` 인터페이스.
 - `transcribe_audio`의 새 파라미터: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - `generate_subtitles`의 새 파라미터: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
 - `spawnDetached` 리팩토링 — 백그라운드/배치 모드에서 모든 품질 플래그가 적용됨.
-- `runSrtPass` 업데이트로 `extraOpts` 허용.
-- 배치 출력 수정 — `readBatchProgress`가 검증 전에 임시 출력을 최종 목적지로 이동하도록 수정 (모든 배치 "실패" 결과의 근본 원인).
+- 배치 출력 수정 — `readBatchProgress`가 검증 전에 임시 출력을 최종 목적지로 이동하도록 수정.
 
-**플래그 호환성 참고:** `gpu_device` / `-g`는 whisper.cpp v1.8.4에서 추가되었습니다. 릴리스의 사전 빌드된 Vulkan 바이너리는 v1.8.3 세대 — 이 파라미터는 도구에서 허용되지만 사용자가 v1.8.4 이상 바이너리로 업데이트할 때까지 효과가 없습니다.
+**플래그 호환성 참고:** `gpu_device` / `--device`는 whisper.cpp v1.8.4에서 추가되었습니다. 릴리스의 사전 빌드된 Vulkan 바이너리는 v1.8.3 세대 — 이 파라미터는 도구에서 허용되지만 사용자가 v1.8.4 이상 바이너리로 업데이트할 때까지 효과가 없습니다.
 
-**현재 바이너리(v1.8.3 세대)에서 확인된 유효한 플래그:**
-`--max-context`, `--no-speech-thold`, `--processors`, `--offset-t`, `--duration`, `--best-of`, `--beam-size`, `--diarize`, `--tinydiarize`, `--temperature`, `--prompt`, VAD 플래그.
+### ✅ v2.2.2 — 패치
+- 이중 라이선스 수정 — LICENSE 및 LICENSE-COMMERCIAL.md 교정.
+- 사소한 문서 수정.
 
-**현재 바이너리에 없는 플래그:** `--no-context` (`--max-context 0` 사용), `--condition-on-previous-text` (Python API 이름만), `--gpu-device` / `-g` (v1.8.4 이상).
+### ✅ v2.3.0 — 배치 자동 진행, 개인 정보 아키텍처, 출력 포맷 확장
 
----
+**배치 자동 진행 (치명적 버그 수정):** `start_batch`가 큐를 진행하기 위해 이전에 활성 폴링이 필요했습니다. 이제 생성된 각 whisper-cli 자식 프로세스에 `on('exit')` 핸들러가 연결됩니다. 프로세스가 종료되면 배치가 exit 콜백을 통해 즉시 자동 진행됩니다 — 폴링 오버헤드와 API 호출 비용이 없습니다. 동시 exit 핸들러 + `check_batch_progress` 호출 간의 이중 생성을 뮤텍스로 방지합니다.
 
-## 중요 버그 — 배치 자동 진행 (확인됨, 수정 대기 중)
+**개인 정보 아키텍처:**
+- `WHISPER_PRIVACY_MODE` 환경 변수 — `true`로 설정 시 모든 도구 응답은 메타데이터만 반환합니다(파일명, 단어 수, 저장 경로). 전사 텍스트가 Claude의 API에 전송되지 않습니다. 전사본은 로컬 파일로만 존재합니다.
+- `WHISPER_CONSENT_ACKNOWLEDGED` 환경 변수 — `true`로 설정 시 민감하지 않은 콘텐츠에 대한 일회성 세션 동의 게이트를 억제합니다.
+- `transcribe_audio`, `transcribe_batch`, `start_batch`, `check_progress`에 `privacy_mode` 호출별 파라미터. 전역 환경 변수를 양방향으로 재정의. 토글에 재시작 불필요.
+- 개인 정보 모드 게이트(`checkPrivacyGate()`) — 유효 개인 정보 모드가 활성화된 경우 모든 작업 전에 실행. 첫 번째 호출 시 활성화(공개 표시), 두 번째 호출 시 해제(허용). 각 작업 후 초기화. 세션 동의 게이트와 완전히 독립적.
+- 세션 동의 게이트(`transcriptPolicy()`) — 기본 모드에서 첫 번째 전사본 반환 호출 전에 세션당 한 번 실행. `sessionConsentGiven` 플래그로 소비.
+- `PRIVACY.md` — HIPAA, GDPR, 변호사-의뢰인 특권, FERPA, SOX, PCI-DSS, NDA/영업 비밀을 다루는 전체 컴플라이언스 문서.
+- 전사 텍스트를 반환하는 모든 도구의 도구 설명 개인 정보 경고.
 
-### 활성 폴링 없이 배치가 자동 진행되지 않음
+**출력 포맷 확장:**
+- `vtt` — `-ovtt`를 통한 WebVTT 자막 출력. `transcribe_audio`, `generate_subtitles`, `start_batch`, 백그라운드 모드에서 사용 가능.
+- `lrc` — `-olrc`를 통한 LRC 가사/카라오케 포맷. `transcribe_audio` 및 백그라운드 모드에서 사용 가능.
+- `csv` — `-ocsv`를 통한 타임스탬프가 있는 CSV. `transcribe_audio` 및 백그라운드 모드에서 사용 가능.
+- `output_format` 기본값이 모든 도구 및 코드 경로에서 `"text"`에서 `"timestamps"`로 변경됨. 일반 텍스트는 이제 선택 사항.
 
-`start_batch`는 파일 간에 큐를 자율적으로 진행하지 않습니다. 배치는 `check_batch_progress`가 호출될 때만 진행됩니다. 폴링 없이는 각 파일 완료 후 배치가 무한정 멈춥니다 — whisper-cli.exe가 종료되어도 새 프로세스가 생성되지 않으며 큐가 진행되지 않습니다.
+**버그 수정:**
+- 버그 1: `output_format`이 백그라운드 작업에 전달되지 않음 — 요청된 포맷에 관계없이 기본 `"text"`가 사용되었습니다. 기본값을 `"timestamps"`로 변경하고 올바르게 전달하도록 수정.
+- 버그 2: 백그라운드 작업 출력 이동 작업의 조용한 `catch {}` 가 실패를 삼켰습니다. 이동 후 명시적 `existsSync` 확인과 상세 실패 메시지를 추가.
+- 버그 3: 백그라운드 생성 지점에 비개인 정보 백그라운드 작업에 대해 동의 게이트가 의도적으로 `check_progress`로 연기되는 이유를 설명하는 설계 주석 추가.
 
-이것은 도구의 핵심 설계 목표인 무인 야간 배치 처리를 파괴하며 Claude API 호출 최소화 설계 원칙에 직접 위반됩니다. 95개 파일 배치를 완료하는 데 100분에 걸쳐 약 200번의 폴링 호출이 필요했습니다.
-
-**근본 원인:** `readBatchProgress`에 모든 큐 진행 로직이 포함되어 있습니다. `check_batch_progress`가 명시적으로 호출될 때만 실행됩니다. 백그라운드 타이머, 파일 감시자, 자율 루프가 없습니다.
-
-**계획된 수정 — 옵션 B (exit 콜백, 강력히 권장):** 생성된 whisper-cli 자식 프로세스에 `on('exit')` 핸들러를 연결. 프로세스가 종료되면 즉시 진행 로직을 실행하여 출력을 검증하고 다음 작업을 생성합니다. 이벤트 기반으로 파일 완료당 정확히 한 번 발생하며 폴링 오버헤드와 API 호출 비용이 없습니다.
-
-**옵션 A (대안만):** 배치 상태 JSON에 이미 있는 FFprobe 재생 시간 데이터에서 도출한 재생 시간 기반 폴링 간격을 사용하는 `setInterval`. 파일 크기는 재생 시간의 신뢰할 수 있는 대리 지표가 아닙니다.
-
-**추가 제약:** 수정은 이미 실행 중인 whisper-cli.exe가 있을 때 두 번째를 생성해서는 안 됩니다 — 자동 진행 경로에서도 프로세스 잠금이 존중되어야 합니다.
-
-**현재 해결 방법:** 배치가 완료될 때까지 `check_batch_progress`를 반복적으로 호출하세요. 파일당 약 한 번의 폴링이 필요합니다.
-
----
-
-## 계획됨 — 개인 정보 아키텍처 (Bun 마이그레이션 이전)
-
-이러한 변경 사항은 Bun 마이그레이션 이전, 그리고 상업적 또는 기업 채택을 촉진하는 라이선스 변경 이전에 출시되어야 합니다. 해결된 컴플라이언스 보호 없이 엔터프라이즈급 도구를 출시하면 규제 산업의 사용자에게 책임을 생성합니다.
-
-### `WHISPER_PRIVACY_MODE` 환경 변수
-이 도구는 현재 **음성**이 머신을 떠나지 않음을 보장합니다. 이 보장은 **전사 텍스트**에는 적용되지 않습니다 — 도구 응답에 전사 콘텐츠가 인라인으로 반환될 때 해당 텍스트는 Claude의 API에서 처리되고 로컬 환경을 떠납니다.
-
-이 격차는 "데이터가 머신을 떠나지 않는다"는 메시지를 음성에서 파생된 모든 콘텐츠가 로컬에 남아 있다는 의미로 합리적으로 해석하는 사용자에게 보이지 않습니다.
-
-`WHISPER_PRIVACY_MODE`를 `claude_desktop_config.json`의 환경 변수로 추가합니다. 활성화 시:
-- 모든 도구 응답은 메타데이터만 반환: 파일명, 재생 시간, 단어 수, 완료 상태
-- 어떤 도구 응답에도 전사 텍스트가 포함되지 않음
-- Claude는 어떤 형태로도 전사 콘텐츠를 읽거나 분석하거나 중계할 수 없음
-- 전사본은 로컬 `.txt` 파일로만 존재
-
-이것은 의료, 법률, 재정, 기업 배포에 적합한 설정입니다. API 호출 없음, 데이터 전송 없음, 컴플라이언스 위험 없음.
-
-### 전사 콘텐츠에 대한 동의 게이트
-`WHISPER_PRIVACY_MODE`가 활성화되지 않은 경우(기본값), 전사 텍스트를 포함하는 도구 응답은 세션당 첫 번째 사용 시 공개 알림이 앞에 와야 합니다. 이 알림은 전사 텍스트가 Anthropic의 API에 전송된다는 것, 이것이 "데이터가 머신을 떠나지 않는다"는 보장의 범위 밖임을, 규제 대상 콘텐츠를 처리하는 사용자는 진행하기 전에 컴플라이언스 의무를 확인해야 한다는 것을 명확히 전달해야 합니다.
-
-구현: 기본값이 `false`인 `WHISPER_CONSENT_ACKNOWLEDGED` 환경 변수. 세션당 첫 번째 전사본 반환 시 승인되지 않은 경우 Claude가 공개 알림을 제시하고 명시적 확인을 요청합니다. 세션 동안 한 번 승인되면 이후 전사본은 재프롬프트 없이 반환됩니다.
-
-### `PRIVACY.md` 문서
-리포지토리 루트에 `PRIVACY.md` 생성:
-- 항상 로컬에 남는 데이터: 음성, 동영상, 모델 파일
-- 기본값으로 로컬을 떠날 수 있는 데이터: 도구 응답의 전사 텍스트
-- 개인 정보 모드로 절대 로컬을 떠나지 않는 데이터: 모든 것
-- 산업별 컴플라이언스 프레임워크 안내 (HIPAA, GDPR, 변호사-의뢰인 특권, FERPA, SOX, PCI-DSS, NDA/영업 비밀)
-- 개인 정보 모드 설정 방법
-- 도구 작성자가 법률 고문이 아니라는 면책 조항
-
-### 도구 스키마 개인 정보 경고
-전사 텍스트를 반환하는 도구에 개인 정보 참고 사항을 포함하도록 `ListToolsRequestSchema` 도구 설명을 업데이트합니다. Claude Desktop의 도구 설명에 표시되어 사용 시점에서 인식을 높입니다.
-
-### 임시 디렉터리 자동 정리
-`%TEMP%\whisper-mcp-jobs\`는 시간이 지남에 따라 작업 상태 및 로그 파일을 축적합니다. 설정 가능한 보존 기간(기본값: 7일)이 지난 완료된 작업 파일의 자동 정리를 추가합니다. 현재는 사용자가 수동으로 `Remove-Item`을 실행해야 합니다.
+**추가:**
+- 임시 디렉터리 자동 정리 — `cleanupOldJobFiles()`가 시작 시 실행되어 `%TEMP%\whisper-mcp-jobs\`에서 7일이 지난 `.json` 및 `.log` 파일을 삭제합니다.
+- `check_config`가 이제 개인 정보 모드 상태를 보고합니다.
+- 시작 로그에 개인 정보 모드 켜짐/꺼짐이 보고됩니다.
+- `Job` 인터페이스에 `privacyMode: boolean` 필드가 추가됩니다.
+- `BatchState` 인터페이스에 `privacyMode: boolean` 필드가 추가됩니다.
+- `BackgroundFormat` 타입이 `json`을 제외합니다(백그라운드 모드의 json은 지원되지 않음 — `text`로 폴백).
 
 ---
 
-## 계획됨 — Bun 마이그레이션
+## 계획됨 — v2.4.0: Bun 마이그레이션
 
-개인 정보 아키텍처가 완성된 후, v2.3.0 기능 추가 이전에 런타임을 Node.js에서 [Bun](https://bun.sh)으로 마이그레이션합니다.
+런타임을 Node.js에서 [Bun](https://bun.sh)으로 마이그레이션합니다.
 
 Claude Desktop은 모든 세션 시작 시 MCP 서버를 새로 생성하므로 시작 시간이 임계 경로에 있습니다. Bun은 컴파일 단계 없이 TypeScript를 네이티브로 실행하고, Node보다 상당히 빠르게 시작하며, I/O도 빠릅니다.
 
@@ -167,30 +138,25 @@ Claude Desktop은 모든 세션 시작 시 MCP 서버를 새로 생성하므로 
 - 모든 도구 동작 및 출력 포맷
 - 최종 사용자의 Claude Desktop 설정
 
-**개인 정보 이후, v2.3.0 이전에 마이그레이션하는 이유:** 코드베이스는 지금이 마이그레이션하기 가장 쉬운 상태입니다. 도구 추가 후 마이그레이션하면 작업량만 늘어나고 이점이 없습니다. 개인 정보 아키텍처는 위에서 설명한 대로 먼저 출시되어야 합니다.
+---
+
+## 계획됨 — v2.5.0: 외부 도구 통합을 위한 향상된 출력 포맷
+
+다운스트림 분석 및 통합 워크플로우를 대상으로 하는 확장된 출력 포맷 지원. 정확한 범위는 v2.3.0 이후 사용자 피드백을 기반으로 결정됩니다.
 
 ---
 
-## 라이선싱
+## 계획됨 — v2.6.0: 실시간 마이크 전사 모드
 
-whisper-windows-mcp는 이중 라이선스를 적용합니다.
+라이브 마이크 입력에서의 실시간 전사. 선택된 녹음 장치에서 오디오를 청크 단위로 whisper에 스트리밍하여 완료된 전사 세그먼트를 롤링 방식으로 반환합니다.
 
-**비상업적 사용:** MIT — 개인, 교육, 비상업적 목적의 사용은 무료입니다. [LICENSE](LICENSE)를 참조하세요.
+**설계 제약:**
+- 장치 선택은 명시적이어야 함 — 조용한 기본 장치 캡처 없음
+- 사용자가 Claude Desktop 상호작용을 통해 스트림을 중지할 수 있어야 함
+- 한 번에 하나의 whisper 인스턴스 제약을 위반해서는 안 됨
+- 지연 시간 대 정확도 절충은 사용자가 설정 가능해야 함
 
-**상업적 사용:** 비즈니스, 전문적 또는 수익 창출 목적의 사용에는 별도의 상업용 라이선스가 필요합니다. [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)를 참조하세요.
-
-규제 산업을 위한 `WHISPER_PRIVACY_MODE`는 향후 릴리스에서 제공될 예정입니다. 현재 규제 대상 콘텐츠 워크플로우에 대해서는 [PRIVACY.md](PRIVACY.md)를 참조하세요.
-
-## 계획됨 — v2.3.0: 출력 포맷 확장
-
-### VTT 자막 포맷
-SRT와 함께 WebVTT(`.vtt`) 출력. VTT는 YouTube, HTML5 `<video>`, 대부분의 최신 플레이어가 사용하는 웹 표준입니다. whisper-cli가 네이티브로 지원합니다. `transcribe_audio`, `generate_subtitles`, `spawnDetached`에 `vtt`를 유효한 출력 포맷으로 추가. `buildArgs`와 관련된 모든 도구 스키마, README, 한국어 문서를 업데이트합니다.
-
-### LRC 포맷
-`-olrc`를 통한 LRC(`.lrc`) 가사/카라오케 포맷 출력. 미디어 플레이어에서 동기화된 가사 표시에 사용됩니다. 구현 비용이 없습니다 — 네이티브 CLI 플래그.
-
-### CSV 포맷
-`-ocsv`를 통한 CSV(`.csv`) 출력. 세그먼트 타이밍이 있는 구조화된 표 형식 데이터 — 다운스트림 분석, 클립 정렬 워크플로우, 스프레드시트 도구 가져오기에 유용합니다. 구현 비용이 없습니다 — 네이티브 CLI 플래그.
+**상태:** 설계 단계. whisper.cpp의 안정적인 스트리밍 API에 의존합니다.
 
 ---
 
@@ -225,7 +191,7 @@ yt-dlp를 통해 YouTube URL에서 직접 전사. 단일 단계에서 음성 다
 ### 화자 분리 (pyannote-audio)
 화자 ID 레이블이 있는 완전한 모노 화자 분리 — 채널 구성에 관계없이 전체 녹음에서 화자 전환을 표시합니다. 내장 `--diarize` 스테레오 플래그(v2.2.0) 및 TinyDiarize와는 다릅니다.
 
-**구현:** [pyannote-audio](https://github.com/pyannote/pyannote-audio)가 필요 — Hugging Face 모델 접근 토큰이 필요한 Python 기반 라이브러리. whisper.cpp 파이프라인과는 완전히 별개의 의존성 스택.
+**구현:** [pyannote-audio](https://github.com/pyannote/pyannote-audio)가 필요 — Hugging Face 모델 접근 토큰이 필요한 Python 기반 라이브러리. 완전히 별개의 의존성 스택.
 
 **상태:** 자체 설정 문서가 있는 선택적 고급 기능으로 계획됨. 메인 패키지에 포함되지 않음.
 
@@ -247,15 +213,25 @@ Whisper의 `--translate` 플래그는 영어만 대상으로 합니다. 임의�
 
 ---
 
+## 라이선싱
+
+whisper-windows-mcp는 이중 라이선스를 적용합니다.
+
+**비상업적 사용:** MIT — 개인, 교육, 비상업적 목적의 사용은 무료입니다. [LICENSE](LICENSE)를 참조하세요.
+
+**상업적 사용:** 비즈니스, 전문적 또는 수익 창출 목적의 사용에는 별도의 상업용 라이선스가 필요합니다. [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)를 참조하세요.
+
+---
+
 ## 배포
 
-[npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai)에서 사용 가능.
+[npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai), [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers)에서 사용 가능 (PR 제출됨).
 
 ---
 
 ## 다국어 문서
 
-일본어, 한국어, 베트남어, 인도네시아어, 우크라이나어, 브라질 포르투갈어 및 스페인어 문서는 영어와 병행하여 관리됩니다. 각 릴리스 후 다음 파일을 영어 문서에 맞게 업데이트해야 합니다:
+각 릴리스 후 다음 파일을 영어 문서에 맞게 업데이트해야 합니다:
 
 **일본어 (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
@@ -271,9 +247,9 @@ Whisper의 `--translate` 플래그는 영어만 대상으로 합니다. 임의�
 
 **스페인어 (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
-**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+**폴란드어 (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
 
-**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+**루마니아어 (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
 
 다른 언어로의 커뮤니티 기여를 환영합니다.
 

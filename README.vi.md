@@ -17,6 +17,7 @@ Sau khi cài đặt, bạn có thể nói trực tiếp trong Claude Desktop:
 - *"Bắt đầu phiên âm hàng loạt tất cả file trong thư mục này"*
 - *"Phiên âm những file này sẽ mất bao lâu?"*
 - *"Kiểm tra xem tăng tốc GPU có đang hoạt động không"*
+- *"Phiên âm tệp này ở chế độ quyền riêng tư"*
 
 ---
 
@@ -163,11 +164,12 @@ Phiên âm một tệp. Hỗ trợ chế độ chặn (mặc định) hoặc n�
 |---|---|
 | `file_path` | Đường dẫn tuyệt đối đến tệp (bắt buộc) |
 | `language` | Mã ngôn ngữ (`vi`, `en`, `ja`, v.v.) hoặc `auto` để tự phát hiện. Mặc định: `en` |
-| `output_format` | `text` (mặc định), `timestamps`, `json`, hoặc `srt` |
+| `output_format` | `timestamps` (mặc định), `text`, `json`, `srt`, `vtt`, `lrc`, hoặc `csv` |
 | `save_to_file` | Lưu bản phiên âm dưới dạng .txt bên cạnh tệp nguồn |
 | `background` | Chạy như tác vụ nền — trả về ID tác vụ ngay lập tức. Dùng `check_progress` để theo dõi. Khuyến nghị cho tệp trên 10 phút. |
+| `privacy_mode` | Ghi đè chế độ quyền riêng tư cho lệnh gọi này. `true` = chỉ siêu dữ liệu, không truyền văn bản phiên âm. `false` = trả về văn bản ngay cả khi `WHISPER_PRIVACY_MODE=true` toàn cục. Bỏ qua để dùng cài đặt toàn cục. |
 | `threads` | Ghi đè số luồng CPU |
-| `temperature` | Nhiệt độ lấy mẫu 0.0–1.0. Mặc định 0.0 (xác định). Giá trị cao hơn giảm ảo giác trên âm thanh nhiều tạp âm. |
+| `temperature` | Nhiệt độ lấy mẫu 0.0–1.0. Mặc định 0.0 (xác định). |
 | `prompt` | Chuỗi ngữ cảnh trước — cải thiện độ chính xác cho từ vựng chuyên ngành hoặc tên người nói. Ví dụ: `"Tên: Keemstar, DramaAlert."` |
 | `condition_on_prev_text` | Bật lại điều kiện hóa ngữ cảnh giữa các đoạn. Mặc định false. |
 | `beam_size` | Độ rộng tìm kiếm chùm. Cao hơn = chính xác hơn, chậm hơn. Mặc định 5. |
@@ -179,34 +181,37 @@ Phiên âm một tệp. Hỗ trợ chế độ chặn (mặc định) hoặc n�
 | `diarize` | Phân tách người nói stereo — yêu cầu âm thanh stereo với người nói trên các kênh riêng biệt. |
 | `vad_model` | Đường dẫn đến tệp .bin mô hình Silero VAD. Loại bỏ im lặng trước khi phiên âm — giảm ảo giác trên tệp nhiều tạp âm. |
 | `offset_t` | Độ lệch bắt đầu tính bằng mili giây. |
-| `duration` | Thời lượng xử lý tính bằng mili giây từ độ lệch. |
+| `duration` | Thời gian xử lý tính bằng mili giây kể từ độ lệch. |
 
 ---
 
 ### `check_progress`
 Theo dõi tác vụ phiên âm nền được bắt đầu bằng `transcribe_audio` (background=true).
 
-Trả về thời gian đã trôi qua, dấu thời gian xử lý cuối cùng, phần trăm và bản phiên âm đầy đủ khi hoàn thành.
+Trả về thời gian đã trôi qua, dấu thời gian được xử lý gần nhất và bản phiên âm đầy đủ khi hoàn thành.
 
 | Tham số | Mô tả |
 |---|---|
 | `job_id` | ID tác vụ được trả về bởi `transcribe_audio` |
+| `privacy_mode` | Ghi đè chế độ quyền riêng tư cho lệnh gọi này. |
 
 ---
 
 ### `start_batch`
-Tự động phiên âm tuần tự tất cả tệp chưa phiên âm trong thư mục. Sắp xếp theo thời lượng (ngắn trước), xử lý từng tệp như tác vụ nền và xác nhận mỗi đầu ra.
+Tự động phiên âm tuần tự tất cả tệp chưa được phiên âm trong một thư mục. Sắp xếp theo thứ tự thời gian (ngắn nhất trước), xử lý từng tệp một như tác vụ nền và xác nhận từng đầu ra.
 
 | Tham số | Mô tả |
 |---|---|
 | `folder_path` | Đường dẫn đến thư mục (bắt buộc) |
 | `language` | Mã ngôn ngữ. Mặc định: `en` |
+| `output_format` | `timestamps` (mặc định), `text`, `srt`, `vtt`, `lrc`, `csv` |
+| `privacy_mode` | Ghi đè chế độ quyền riêng tư cho đợt này. |
 | `threads` | Ghi đè số luồng CPU |
 
 ---
 
 ### `check_batch_progress`
-Theo dõi một đợt đang chạy. Tự động chuyển sang tệp tiếp theo khi tệp hiện tại hoàn thành. Trả về tiến trình tổng thể, tệp hiện tại với dấu thời gian, ETA và các tệp thất bại.
+Theo dõi đợt đang chạy. Tự động tiến sang tệp tiếp theo khi tệp hiện tại hoàn thành. Trả về tiến trình tổng thể, tệp hiện tại có dấu thời gian, ETA và các tệp thất bại.
 
 | Tham số | Mô tả |
 |---|---|
@@ -227,20 +232,22 @@ Xử lý từng tệp một với xem trước và xác nhận trước mỗi t�
 ---
 
 ### `generate_subtitles`
-Tạo tệp phụ đề SRT. Hỗ trợ tự động phát hiện ngôn ngữ và đầu ra dịch sang tiếng Anh.
+Tạo tệp phụ đề. Hỗ trợ tự động phát hiện ngôn ngữ và đầu ra dịch sang tiếng Anh.
 
 | Tham số | Mô tả |
 |---|---|
 | `file_path` | Đường dẫn đến tệp (bắt buộc) |
 | `language` | Mã ngôn ngữ hoặc `auto` để tự phát hiện. Mặc định: `en` |
-| `translate_to_english` | Cũng tạo `.en.srt` dịch sang tiếng Anh. Chỉ áp dụng khi nguồn không phải tiếng Anh. |
+| `output_format` | `srt` (mặc định) hoặc `vtt` |
+| `translate_to_english` | Cũng tạo tệp phụ đề dịch sang tiếng Anh. Chỉ áp dụng khi nguồn không phải tiếng Anh. |
+| `background` | Chạy như tác vụ nền tách rời. Trả về ID tác vụ cho `check_progress`. |
 | `threads` | Ghi đè số luồng CPU |
 
 Khi cả hai được yêu cầu, hai tệp được lưu bên cạnh nguồn:
 - `tenfile.vi.srt` — ngôn ngữ gốc
 - `tenfile.en.srt` — bản dịch tiếng Anh
 
-> Bản dịch tích hợp của Whisper chỉ dịch **sang tiếng Anh**. Để dịch sang ngôn ngữ khác, hãy xử lý nội dung tệp .srt riêng biệt.
+> Bản dịch tích hợp của Whisper chỉ dịch **sang tiếng Anh**. Để dịch sang ngôn ngữ khác, hãy xử lý nội dung tệp `.srt` riêng biệt.
 
 ---
 
@@ -265,7 +272,7 @@ Liệt kê tất cả tệp mô hình Whisper đã cài đặt trong thư mục 
 ---
 
 ### `download_model`
-Tải xuống mô hình Whisper trực tiếp từ Hugging Face vào thư mục mô hình của bạn. Nhận tên mô hình (ví dụ: `large-v3-turbo`, `medium.en-q5_0`) và tự động xử lý việc tải xuống. Chỉ tải xuống từ các namespace Hugging Face đáng tin cậy. Sau khi tải xuống, sử dụng `switch_model` để kích hoạt.
+Tải xuống tệp mô hình Whisper trực tiếp từ Hugging Face vào thư mục mô hình của bạn. Chỉ tải xuống từ các namespace Hugging Face đáng tin cậy. Sau khi tải xuống, sử dụng `switch_model` để kích hoạt.
 
 | Tham số | Mô tả |
 |---|---|
@@ -301,14 +308,16 @@ Phát hiện phần cứng GPU và xác nhận tăng tốc Vulkan có sẵn. Bá
 
 Bản phát hành Vulkan đã biên dịch sẵn bật tăng tốc GPU tự động. Đã thử nghiệm trên AMD Radeon RX Vega 56 (GCN thế hệ 5). Bất kỳ GPU nào hỗ trợ Vulkan 1.0+ đều sẽ hoạt động, bao gồm NVIDIA và Intel Arc.
 
-**So sánh hiệu suất (mô hình medium.en, tệp âm thanh ~5 phút):**
+**So sánh hiệu suất (mô hình large-v3, tệp âm thanh ~14 phút):**
 
 | Phần cứng | Thời gian |
 |---|---|
-| Chỉ CPU (Ryzen 7 2700x, 8 luồng) | 8–12 phút |
-| GPU (Vega 56 qua Vulkan) | 20–40 giây |
+| Chỉ CPU (Ryzen 7 2700x, 8 luồng) | ~22 phút (ước tính) |
+| GPU (Vega 56 qua Vulkan) | ~3 phút 22 giây |
 
-Mức sử dụng GPU trong quá trình phiên âm thường là 15–20%, giảm về trạng thái nhàn rỗi giữa các tệp. CPU duy trì khoảng 15%.
+Mức sử dụng GPU trong quá trình phiên âm thường là 15–20%, giảm về trạng thái nhàn rỗi giữa các tệp.
+
+Hỗ trợ Windows 10 và Windows 11. Không cần cấu hình riêng cho Windows 11 — công cụ không thực hiện lệnh gọi Win32 API trực tiếp và chạy trên cả hai hệ điều hành.
 
 ---
 
@@ -320,9 +329,25 @@ Whisper có thể tự động phát hiện ngôn ngữ được nói và phiên
 
 **Ví dụ — video nước ngoài có phụ đề:**
 1. Yêu cầu Claude tạo phụ đề với `language=auto` và `translate_to_english=true`
-2. Whisper phát hiện ngôn ngữ và tạo SRT ngôn ngữ gốc
-3. Lần xử lý thứ hai tạo SRT dịch sang tiếng Anh
-4. Tải tệp trong VLC qua Phụ đề → Thêm tệp phụ đề
+2. Whisper phát hiện ngôn ngữ và tạo SRT hoặc VTT ngôn ngữ gốc
+3. Lần xử lý thứ hai tạo bản dịch tiếng Anh
+4. Tải tệp SRT trong VLC qua Phụ đề → Thêm tệp phụ đề, hoặc dùng VTT trong bất kỳ trình phát web nào
+
+---
+
+## Quyền riêng tư và tuân thủ
+
+whisper-windows-mcp bao gồm kiến trúc quyền riêng tư tích hợp cho nội dung nhạy cảm và được quản lý.
+
+**Âm thanh và video không bao giờ rời khỏi máy của bạn.** Đảm bảo này là vô điều kiện.
+
+**Văn bản phiên âm** khác — khi được trả về nội tuyến trong phản hồi công cụ, nó được xử lý bởi API của Claude. Đối với hầu hết người dùng đây là hành vi bình thường. Đối với nội dung được quản lý (y tế, pháp lý, tài chính, doanh nghiệp), chế độ quyền riêng tư ngăn điều này.
+
+**Chế độ quyền riêng tư** giới hạn tất cả phản hồi công cụ chỉ có siêu dữ liệu (tên tệp, số từ, đường dẫn lưu). Không có văn bản phiên âm nào được truyền đến API của Claude trong bất kỳ trường hợp nào. Bật theo từng lệnh gọi với `privacy_mode=true` trên bất kỳ công cụ phiên âm nào, hoặc toàn cục qua `WHISPER_PRIVACY_MODE=true` trong cấu hình.
+
+**Cổng đồng ý** — ở lần sử dụng đầu tiên mỗi phiên ở chế độ tiêu chuẩn, một công khai quyền riêng tư đầy đủ được hiển thị trước khi văn bản phiên âm được trả về. Bạn phải xác nhận rõ ràng trước khi tiếp tục. Đặt `WHISPER_CONSENT_ACKNOWLEDGED=true` trong cấu hình để bỏ qua điều này cho nội dung không nhạy cảm.
+
+Xem [PRIVACY.md](PRIVACY.md) để biết hướng dẫn tuân thủ đầy đủ (HIPAA, GDPR, đặc quyền luật sư-khách hàng, FERPA, SOX, PCI-DSS).
 
 ---
 
@@ -340,7 +365,30 @@ Công cụ này được xây dựng để giảm thiểu các tương tác vớ
 | `WHISPER_MODEL` | Đường dẫn đến tệp mô hình .bin (bắt buộc) |
 | `WHISPER_THREADS` | Ghi đè số luồng CPU |
 | `FFMPEG_PATH` | Đường dẫn đến ffmpeg nếu không có trong PATH hệ thống |
-| `WHISPER_PRIVACY_MODE` | **Đang lên kế hoạch.** Khi đặt thành `true`, phản hồi công cụ chỉ trả về siêu dữ liệu — không có văn bản phiên âm nào được trả về cho Claude. Dành cho nội dung được quản lý hoặc bí mật. Xem [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_PRIVACY_MODE` | Đặt thành `true` để tất cả phản hồi công cụ chỉ trả về siêu dữ liệu — không có văn bản phiên âm nào được trả về cho Claude. Dùng cho nội dung được quản lý hoặc bí mật. Có thể ghi đè theo từng lệnh gọi bằng tham số `privacy_mode`. Xem [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_CONSENT_ACKNOWLEDGED` | Đặt thành `true` để bỏ qua công khai đồng ý phiên một lần hiển thị trước khi trả về văn bản phiên âm. Đặt khi bạn hiểu ranh giới quyền riêng tư và không cần nhắc nhở nữa. Không có hiệu lực khi chế độ quyền riêng tư đang hoạt động. |
+
+---
+
+## Bảo mật
+
+**Xác minh tệp nhị phân.** Để xác minh tính toàn vẹn của tệp nhị phân whisper-cli.exe trong bản phát hành đã biên dịch sẵn, hãy kiểm tra hash SHA256 trong PowerShell:
+
+```powershell
+Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
+```
+
+Hash dự kiến được ghi lại trên [trang phát hành](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
+
+**Xác thực đầu vào.** Tất cả đường dẫn tệp được xác thực trước khi sử dụng — đường dẫn UNC (`\\server\share`) và chuỗi duyệt thư mục (`..`) bị từ chối. Tệp trên 10 GB bị từ chối để ngăn cạn kiệt tài nguyên.
+
+**Nhận thức về tiêm nhiễm phiên âm.** Tệp âm thanh có thể chứa nội dung khi phiên âm trông giống như hướng dẫn. Các biện pháp phòng thủ tích hợp của Claude xử lý điều này, nhưng biết rằng nội dung phiên âm được coi là dữ liệu — không bao giờ là hướng dẫn — bởi chính máy chủ MCP cũng rất hữu ích.
+
+**Tải xuống mô hình bị hạn chế.** Công cụ `download_model` chỉ tải xuống từ hai namespace Hugging Face đáng tin cậy (`ggerganov/whisper.cpp` và `ggml-org`). URL tùy ý bị từ chối. Chuyển hướng được xác thực dựa trên danh sách cho phép trước khi tuân theo.
+
+**Chuyển đổi mô hình được sandbox hóa.** `switch_model` chỉ chấp nhận tệp `.bin` trong thư mục mô hình đã cấu hình. Đường dẫn ngoài thư mục đó bị từ chối.
+
+Xem [SECURITY.md](SECURITY.md) để biết chính sách bảo mật đầy đủ.
 
 ---
 
@@ -358,36 +406,14 @@ Danh sách kiểm tra nhanh:
 
 ---
 
-## Bảo mật và quyền riêng tư
-
-whisper-windows-mcp được thiết kế với bảo mật là nguyên tắc cốt lõi.
-
-**Âm thanh không bao giờ rời khỏi máy của bạn.** Không có tệp âm thanh hoặc video, đường dẫn tệp, hay dữ liệu đo lường nào được truyền đến bất kỳ máy chủ nào. Không cần API đám mây cho chức năng cốt lõi.
-
-**Văn bản phiên âm và ranh giới API.** Khi phản hồi công cụ bao gồm văn bản phiên âm, văn bản đó được xử lý bởi API của Claude — nó rời khỏi máy cục bộ của bạn. Đối với hầu hết người dùng (nội dung công khai, podcast, bản ghi phát trực tuyến) đây là hành vi bình thường. Nếu bạn xử lý bản ghi y tế, pháp lý, tài chính hoặc được quản lý khác, hãy xem [PRIVACY.md](PRIVACY.md) để biết hướng dẫn tuân thủ và các tùy chọn cấu hình.
-
-Biến môi trường `WHISPER_PRIVACY_MODE` đang được lên kế hoạch, sẽ giới hạn tất cả phản hồi công cụ chỉ có siêu dữ liệu (tên tệp, thời lượng, số từ) — không có văn bản phiên âm nào được trả về cho Claude. Đây là cấu hình chính xác cho nội dung được quản lý hoặc bí mật.
-
-**Xác thực đầu vào.** Tất cả đường dẫn tệp được xác thực trước khi sử dụng — đường dẫn UNC (`\\server\share`) và chuỗi duyệt thư mục (`..`) bị từ chối. Tệp trên 10 GB bị từ chối để ngăn cạn kiệt tài nguyên.
-
-**Nhận thức về tiêm nhiễm phiên âm.** Tệp âm thanh có thể chứa nội dung khi phiên âm trông giống như hướng dẫn. Các biện pháp phòng thủ tích hợp của Claude xử lý điều này, nhưng biết rằng nội dung phiên âm được coi là dữ liệu — không bao giờ là hướng dẫn — bởi chính máy chủ MCP cũng rất hữu ích.
-
-**Tải xuống mô hình bị hạn chế.** Công cụ `download_model` chỉ tải xuống từ hai namespace Hugging Face đáng tin cậy (`ggerganov/whisper.cpp` và `ggml-org`). URL tùy ý bị từ chối. Chuyển hướng được xác thực dựa trên danh sách cho phép trước khi tuân theo.
-
-**Chuyển đổi mô hình được sandbox hóa.** `switch_model` chỉ chấp nhận tệp `.bin` trong thư mục mô hình đã cấu hình. Đường dẫn ngoài thư mục đó bị từ chối.
-
-**Không có phụ thuộc mạng mới.** Tải xuống mô hình sử dụng `https` tích hợp sẵn của Node.js — không có thư viện HTTP bên ngoài nào được thêm vào gói.
-
----
-
 ## Giấy phép
 
 **Sử dụng phi thương mại:** MIT — miễn phí cho mục đích cá nhân, giáo dục và phi thương mại. Xem [LICENSE](LICENSE).
 
-**Sử dụng thương mại:** Cần có thỏa thuận giấy phép thương mại riêng cho bất kỳ mục đích kinh doanh, chuyên nghiệp hoặc tạo doanh thu nào. Xem [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) để biết điều khoản và thông tin liên hệ.
+**Sử dụng thương mại:** Cần có thỏa thuận giấy phép thương mại riêng cho bất kỳ mục đích kinh doanh, chuyên nghiệp hoặc tạo doanh thu nào. Xem [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) để biết điều khoản và thông tin liên hệ.
 
 ## Đóng góp
 
 Chào mừng pull request. Xem [ROADMAP.md](ROADMAP.md) để biết các tính năng đã lên kế hoạch.
 
-Nếu bạn đã thử nghiệm tăng tốc GPU trên phần cứng không được liệt kê ở trên, vui lòng mở issue với kết quả của bạn — mô hình GPU, VRAM, kích thước mô hình và thông lượng quan sát được.
+Nếu bạn đã thử nghiệm tăng tốc GPU trên phần cứng không được liệt kê ở trên, vui lòng mở issue với mô hình GPU, VRAM, kích thước mô hình và thông lượng quan sát được.

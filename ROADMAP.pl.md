@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Plan rozwoju
 
-Aktualna wersja: **v2.2.0**
+Aktualna wersja: **v2.3.0**
 
 ---
 
@@ -54,7 +54,7 @@ Architektura odłączonego procesu: `transcribe_audio` z `background=true` uruch
 ### ✅ v2.0.0 — Bezpieczne ścieżki Unicode + SRT w tle
 **Nazwy plików Unicode:** Pliki z niezgodnymi z ASCII znakami w nazwach powodowały ciche niepowodzenia transkrypcji w tle. Naprawiono przez kierowanie całego wyjścia przez oczyszczoną tymczasową ścieżkę opartą na ID zadania, następnie przenoszenie wyniku do właściwego miejsca docelowego po zakończeniu.
 
-**SRT w trybie tle:** `spawnDetached` wcześniej na stałe kodował `-otxt` niezależnie od żądanego formatu, a `generate_subtitles` blokował synchronicznie i osiągał 4-minutowy limit czasu MCP na dłuższych plikach. Naprawiono dodając parametr `outputFormat` do `spawnDetached`, obsługując wyjście `text` i `srt` w trybie tle.
+**SRT w trybie tle:** `spawnDetached` wcześniej na stałe kodował `-otxt` niezależnie od żądanego formatu. Naprawiono dodając parametr `outputFormat` do `spawnDetached`, obsługując wyjście `text` i `srt` w trybie tle.
 
 ### ✅ v2.0.1 — Poprawki błędów (włączone do v2.2.0)
 - `--max-context 0` zakodowane na stałe w `buildArgs` i `spawnDetached` — zapobiega pętlom halucynacji na długim audio.
@@ -73,46 +73,139 @@ Architektura odłączonego procesu: `transcribe_audio` z `background=true` uruch
 - Narzędzie `switch_model` — waliduje rozszerzenie `.bin`, ograniczenie katalogu, sprawdzenie blokady procesu.
 - Zaktualizowano `recommendedModel()` do rekomendowania `large-v3-turbo` dla VRAM 6GB+.
 
-### ✅ v2.2.0 — Rozszerzenie jakości, parametrów i sprzętu (aktualna)
+### ✅ v2.2.0 — Rozszerzenie jakości, parametrów i sprzętu
 - Interfejs `WhisperOptions` zastępujący argumenty pozycyjne w `buildArgs`.
 - Nowe parametry w `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - Nowe parametry w `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
 - Zrefaktoryzowano `spawnDetached` — wszystkie flagi jakości są teraz stosowane w trybie tle/partia.
 - Naprawiono wyjście partii — `readBatchProgress` teraz przenosi tymczasowe wyjście do końcowego miejsca docelowego przed weryfikacją.
 
+**Uwaga dotycząca zgodności flag:** `gpu_device` / `--device` zostało dodane w whisper.cpp v1.8.4. Gotowe binarium Vulkan w wydaniach jest w wersji v1.8.3 — ten parametr jest akceptowany przez narzędzie, ale nie będzie miał efektu dopóki użytkownicy nie zaktualizują do binarium v1.8.4+.
+
+### ✅ v2.2.2 — Łatka
+- Naprawa podwójnej licencji — LICENSE i LICENSE-COMMERCIAL.md poprawione.
+- Drobne poprawki dokumentacji.
+
+### ✅ v2.3.0 — Automatyczne przesuwanie partii, architektura prywatności, rozszerzenie formatów wyjściowych
+
+**Automatyczne przesuwanie partii (krytyczna naprawa błędu):** `start_batch` wcześniej wymagało aktywnego odpytywania do przesuwania kolejki. Do każdego uruchomionego procesu potomnego whisper-cli jest teraz dołączony handler `on('exit')`. Gdy proces wychodzi, partia samodzielnie przesuwa się przez callback wyjścia z zerowym kosztem odpytywania i zerowymi wywołaniami API. Mutex zapobiega podwójnemu uruchomieniu między równoległym handlerem wyjścia a wywołaniami `check_batch_progress`.
+
+**Architektura prywatności:**
+- Zmienna środowiskowa `WHISPER_PRIVACY_MODE` — gdy `true`, wszystkie odpowiedzi narzędzi zwracają tylko metadane (nazwa pliku, liczba słów, ścieżka zapisu). Żaden tekst transkrypcji nie jest nigdy przesyłany do API Claude. Transkrypcje istnieją tylko jako lokalne pliki.
+- Zmienna środowiskowa `WHISPER_CONSENT_ACKNOWLEDGED` — gdy `true`, pomija jednorazową bramę zgody dla sesji dla treści niepoufnych.
+- Parametr `privacy_mode` dla pojedynczego wywołania w `transcribe_audio`, `transcribe_batch`, `start_batch` i `check_progress`. Zastępuje globalną zmienną środowiskową w obu kierunkach. Nie wymaga restartu do przełączania per wywołanie.
+- Brama trybu prywatności (`checkPrivacyGate()`) — uruchamia się przed każdą operacją, gdy efektywny tryb prywatności jest aktywny.
+- Brama zgody sesji (`transcriptPolicy()`) — uruchamia się raz na sesję przed pierwszym wywołaniem zwracającym transkrypcję w trybie standardowym.
+- `PRIVACY.md` — pełna dokumentacja zgodności obejmująca HIPAA, RODO, tajemnicę adwokacką, FERPA, SOX, PCI-DSS i NDA/tajemnicę handlową.
+
+**Rozszerzenie formatów wyjściowych:**
+- `vtt` — wyjście WebVTT przez `-ovtt`. Dostępne w `transcribe_audio`, `generate_subtitles`, `start_batch` i trybie tle.
+- `lrc` — format LRC tekstu/karaoke przez `-olrc`. Dostępne w `transcribe_audio` i trybie tle.
+- `csv` — CSV ze znacznikami czasu przez `-ocsv`. Dostępne w `transcribe_audio` i trybie tle.
+- Domyślny `output_format` zmieniony z `"text"` na `"timestamps"` we wszystkich narzędziach i ścieżkach kodu.
+
+**Naprawki błędów:**
+- Błąd 1: `output_format` nie był przekazywany do zadań w tle — niezależnie od żądanego formatu używany był domyślny `"text"`. Naprawiono przez zmianę domyślnego na `"timestamps"` i poprawne przekazywanie.
+- Błąd 2: Cichy `catch {}` w operacji przenoszenia wyjścia zadania w tle ukrywał niepowodzenia. Dodano jawne sprawdzenie `existsSync` ze szczegółowym komunikatem o błędzie po przeniesieniu.
+- Błąd 3: Dodano komentarz projektowy w punkcie uruchamiania w tle dokumentujący, dlaczego brama zgody jest celowo odroczona do `check_progress` dla zadań w tle bez trybu prywatności.
+
+**Dodatkowo:**
+- Automatyczne czyszczenie katalogu tymczasowego — `cleanupOldJobFiles()` uruchamia się przy starcie, usuwa pliki `.json` i `.log` starsze niż 7 dni z `%TEMP%\whisper-mcp-jobs\`.
+- `check_config` teraz raportuje status trybu prywatności.
+- Dziennik startowy raportuje włączenie/wyłączenie trybu prywatności.
+
 ---
 
-## Krytyczny błąd — Automatyczne przesuwanie partii (potwierdzony, oczekuje naprawy)
+## Planowane — v2.4.0: Migracja do Bun
 
-### Partia nie przesuwa się bez aktywnego odpytywania
+Migracja środowiska uruchomieniowego z Node.js do [Bun](https://bun.sh).
 
-`start_batch` nie przesuwa kolejki autonomicznie między plikami. Partia przesuwa się tylko gdy wywoływane jest `check_batch_progress`. Bez odpytywania partia zatrzymuje się na czas nieokreślony po każdym pliku.
+Ponieważ Claude Desktop uruchamia serwer MCP na nowo przy każdym starcie sesji, czas uruchamiania jest na ścieżce krytycznej. Bun uruchamia TypeScript natywnie bez kroku kompilacji, startuje znacznie szybciej niż Node i ma szybszy I/O.
 
-**Planowana naprawa — Opcja B (callback wyjścia):** Dołącz handler `on('exit')` do uruchomionego procesu potomnego whisper-cli. Gdy proces wyjdzie, natychmiast wywołaj logikę postępu, aby zweryfikować wyjście i uruchomić następne zadanie.
+**Co się zmienia:**
+- Eliminacja kroku budowania `tsc` i katalogu `dist/`
+- Użytkownicy uruchamiają kod TypeScript bezpośrednio
+- `tsconfig.json` staje się opcjonalny
+- Aktualizacja skryptów `package.json`
+- Aktualizacja przepływu pracy publikacji npm
 
-**Aktualne obejście:** Wywołuj `check_batch_progress` wielokrotnie aż partia się ukończy.
-
----
-
-## Planowane — Architektura prywatności (przed migracją do Bun)
-
-### Zmienna środowiskowa `WHISPER_PRIVACY_MODE`
-Dodaj `WHISPER_PRIVACY_MODE` jako zmienną środowiskową w `claude_desktop_config.json`. Po włączeniu wszystkie odpowiedzi narzędzi zwracają tylko metadane — żaden tekst transkrypcji nie jest uwzględniany.
-
-### Brama zgody dla treści transkrypcji
-Gdy `WHISPER_PRIVACY_MODE` nie jest włączony (domyślnie), każda odpowiedź narzędzia zawierająca tekst transkrypcji musi być poprzedzona ujawnieniem przy pierwszym użyciu w sesji.
-
-### Dokumentacja `PRIVACY.md`
-Utwórz `PRIVACY.md` w katalogu głównym repozytorium obejmujący pełne wskazówki dotyczące prywatności i ramy zgodności.
-
-### Automatyczne czyszczenie katalogu tymczasowego
-Dodaj automatyczne czyszczenie ukończonych plików zadań po konfigurowalnym oknie retencji (domyślnie: 7 dni).
+**Co się nie zmienia:**
+- Kod źródłowy `src/index.ts` — Bun jest kompatybilny z istniejącym TypeScript i wbudowanymi API Node.js
+- Całe zachowanie narzędzi i formaty wyjściowe
+- Konfiguracja Claude Desktop dla użytkowników końcowych
 
 ---
 
-## Planowane — Migracja do Bun
+## Planowane — v2.5.0: Rozszerzone formaty wyjściowe dla integracji zewnętrznych narzędzi
 
-Migracja środowiska uruchomieniowego z Node.js do [Bun](https://bun.sh) po zakończeniu architektury prywatności i przed dodaniem funkcji v2.3.0. Bun uruchamia TypeScript natywnie bez kroku kompilacji i startuje znacznie szybciej niż Node.
+Rozszerzona obsługa formatów wyjściowych skierowana na przepływy pracy analizy i integracji. Dokładny zakres zostanie określony na podstawie opinii użytkowników po v2.3.0.
+
+---
+
+## Planowane — v2.6.0: Tryb transkrypcji na żywo z mikrofonu
+
+Transkrypcja w czasie rzeczywistym z wejścia mikrofonu na żywo. Strumieniowanie audio z wybranego urządzenia nagrywającego do whisper w fragmentach, zwracając kolejne segmenty transkrypcji w miarę ich ukończenia.
+
+**Ograniczenia projektowe:**
+- Wybór urządzenia musi być jawny — bez cichego przechwytywania domyślnego urządzenia
+- Użytkownik musi mieć możliwość zatrzymania strumienia przez interakcję z Claude Desktop
+- Nie może kolidować z ograniczeniem jednej instancji whisper jednocześnie
+- Kompromis między opóźnieniem a dokładnością musi być konfigurowalny przez użytkownika
+
+**Status:** Faza projektowania. Zależy od stabilnego API strumieniowania w whisper.cpp.
+
+---
+
+## Planowane — Przyszłe wydania
+
+### TinyDiarize
+Obsługa flagi `--tinydiarize` z wariantami modeli obsługującymi `tdrz` (np. `large-v2-tdrz`). W przeciwieństwie do flagi `--diarize` stereo, TinyDiarize działa na nagraniach mono. Wymaga pobrania specjalnego wariantu modelu. Niższa dokładność niż diaryzacja oparta na pyannote, ale zero dodatkowych zależności poza plikiem modelu.
+
+**Status:** Planowane. Zależy od obsługi wariantów modeli tdrz w `download_model`.
+
+### Transkrypcja URL YouTube
+Bezpośrednia transkrypcja z URL YouTube przez yt-dlp. Pobieranie audio i transkrypcja w jednym kroku. Wymaga zainstalowanego yt-dlp w PATH.
+
+**Ograniczenie projektowe:** yt-dlp jest opcjonalny. Narzędzie musi degradować się elegancko z jasnymi instrukcjami instalacji jeśli nie zostanie znalezione. Brak zmian w podstawowej funkcjonalności dla użytkowników, którzy tego nie potrzebują.
+
+### Narzędzia przepływu pracy projektów wideo
+Dla użytkowników zarządzających dużymi projektami edycji wideo z folderami klipów źródłowych i edytowanych:
+
+1. Skanowanie folderu źródłowego i podfolderu klipów
+2. Rozmyte dopasowywanie transkrypcji edytowanych klipów do transkrypcji źródłowych w celu zlokalizowania punktów pochodzenia
+3. Wyświetlanie opisowych nazw plików sugerowanych przez Claude na podstawie treści transkrypcji, wymagające jawnego potwierdzenia użytkownika przed wykonaniem jakiegokolwiek przemianowania
+4. Wyszukiwanie transkrypcji w katalogu projektu z wynikami w kodach czasowych
+
+**Ograniczenia projektowe:**
+- Pliki źródłowe są **nigdy nie przemianowywane ani modyfikowane**
+- Wszystkie przemianowania wymagają **jawnego potwierdzenia użytkownika**
+- Wyszukiwanie jest osobnym narzędziem, używalnym niezależnie
+- Analiza i dopasowywanie odbywają się lokalnie — Claude jest wywoływany tylko gdy użytkownik przegląda wyniki, minimalizując wywołania API
+
+**Status:** Faza projektowania.
+
+### Diaryzacja mówców (pyannote-audio)
+Pełna diaryzacja mówców mono z etykietami ID mówcy — oznacza przejścia mówców przez całe nagranie niezależnie od konfiguracji kanałów. Różni się od wbudowanej flagi `--diarize` stereo (v2.2.0) i TinyDiarize.
+
+**Implementacja:** Wymaga [pyannote-audio](https://github.com/pyannote/pyannote-audio) — biblioteki opartej na Pythonie z wymogiem tokenu dostępu do modeli Hugging Face. Całkowicie oddzielny stos zależności.
+
+**Status:** Opcjonalna zaawansowana funkcja z własną dokumentacją konfiguracji. Nie jest włączona do głównego pakietu.
+
+### Tłumaczenie na języki inne niż angielski
+Flaga `--translate` Whisper jest skierowana tylko na angielski. Obsługa dowolnych języków docelowych wymaga zewnętrznego API tłumaczenia lub lokalnego modelu tłumaczenia.
+
+**Opcje rozważane:** LibreTranslate (samohosted, lokalny priorytet), lokalny LLM tłumaczący lub jawna dokumentacja poza zakresem.
+
+**Status:** Odroczone, oczekuje decyzji projektowej dotyczącej lokalnego priorytetu vs zależności API.
+
+### Czyszczenie i formatowanie transkrypcji
+Pipeline post-przetwarzania:
+- Usuwanie słów wypełniaczy i fałszywych startów (opcjonalne, kontrolowane przez użytkownika)
+- Podziały akapitów na naturalnych granicach tematów
+- Formatowanie uwzględniające mówców w połączeniu z wyjściem diaryzacji
+- Eksport do PDF lub DOCX
+
+**Status:** Planowane. Wariant uwzględniający mówców zależy od diaryzacji.
 
 ---
 
@@ -122,54 +215,19 @@ whisper-windows-mcp używa podwójnego licencjonowania.
 
 **Użytek niekomercyjny:** MIT — bezpłatny do użytku osobistego, edukacyjnego i niekomercyjnego. Zobacz [LICENSE](LICENSE).
 
-**Użytek komercyjny:** Wymagana jest osobna umowa licencji komercyjnej. Zobacz [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
-
-`WHISPER_PRIVACY_MODE` dla wdrożeń w regulowanych branżach jest w trakcie opracowywania i planowany na przyszłe wydanie. Zobacz [PRIVACY.md](PRIVACY.md) dla aktualnych wskazówek.
-
-## Planowane — v2.3.0: Rozszerzenie formatów wyjściowych
-
-### Format napisów VTT
-Wyjście WebVTT (`.vtt`) wraz z SRT. Standard internetowy używany przez YouTube, HTML5 `<video>` i większość nowoczesnych odtwarzaczy.
-
-### Format LRC
-Wyjście w formacie LRC (`.lrc`) tekstu piosenek/karaoke przez `-olrc`.
-
-### Format CSV
-Wyjście CSV (`.csv`) przez `-ocsv`. Strukturalne dane tabelaryczne z synchronizacją segmentów.
-
----
-
-## Planowane — Przyszłe wydania
-
-### TinyDiarize
-Obsługa flagi `--tinydiarize` z wariantami modeli obsługującymi `tdrz`. Działa na nagraniach mono w przeciwieństwie do flagi `--diarize` stereo.
-
-### Transkrypcja URL YouTube
-Bezpośrednia transkrypcja z URL YouTube przez yt-dlp. Wymaga zainstalowanego yt-dlp w PATH.
-
-### Narzędzia przepływu pracy projektów wideo
-Dla użytkowników zarządzających dużymi projektami edycji wideo z folderami klipów źródłowych i edytowanych. Pliki źródłowe nigdy nie są zmieniane bez jawnego potwierdzenia użytkownika.
-
-### Diaryzacja mówców (pyannote-audio)
-Pełna diaryzacja mówców mono z etykietami ID mówcy. Wymaga pyannote-audio — biblioteki opartej na Pythonie z wymogiem tokenu dostępu do modeli Hugging Face.
-
-### Tłumaczenie na języki inne niż angielski
-Flaga `--translate` Whisper jest skierowana tylko na angielski. Obsługa dowolnych języków docelowych wymaga zewnętrznego API tłumaczenia lub lokalnego modelu tłumaczenia.
-
-### Czyszczenie i formatowanie transkrypcji
-Pipeline post-przetwarzania: usuwanie słów wypełniaczy, podziały akapitów na naturalnych granicach tematów, formatowanie uwzględniające mówców, eksport do PDF lub DOCX.
+**Użytek komercyjny:** Wymagana jest osobna umowa licencji komercyjnej dla jakiegokolwiek użytku biznesowego, zawodowego lub generującego przychody. Warunki i dane kontaktowe — w [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
 
 ---
 
 ## Dystrybucja
 
-Dostępne na [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org) i [Glama](https://glama.ai).
+Dostępne na [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai) i [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers).
 
 ---
 
 ## Dokumentacja wielojęzyczna
 
-Dokumentacja w językach japońskim, koreańskim, wietnamskim, indonezyjskim, ukraińskim, brazylijskim portugalskim, hiszpańskim i polskim jest utrzymywana równolegle z angielską. Następujące pliki muszą być aktualizowane, aby odpowiadać dokumentacji angielskiej po każdym wydaniu:
+Po każdym wydaniu należy zaktualizować następujące pliki, aby odpowiadały dokumentacji angielskiej:
 
 **Japoński (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
@@ -186,6 +244,8 @@ Dokumentacja w językach japońskim, koreańskim, wietnamskim, indonezyjskim, uk
 **Hiszpański (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
 **Polski (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+
+**Rumuński (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
 
 Wkład społeczności dla innych języków jest mile widziany.
 

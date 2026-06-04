@@ -17,6 +17,7 @@ După instalare, poți spune direct în Claude Desktop:
 - *"Începe transcrierea în lot a tuturor fișierelor din acest folder"*
 - *"Cât timp va dura să transcrii aceste fișiere?"*
 - *"Verifică dacă accelerarea GPU funcționează"*
+- *"Transcrie acest fișier în modul de confidențialitate"*
 
 ---
 
@@ -87,7 +88,7 @@ Folosește `download_model` în Claude Desktop pentru instalare directă. Pentru
 
 ## Pasul 3 — Instalarea FFmpeg
 
-FFmpeg este necesar pentru fișiere video și formate audio native.
+FFmpeg este necesar pentru fișiere video și formate audio non-native.
 
 Instalare via winget:
 ```
@@ -163,12 +164,13 @@ Transcrie un singur fișier. Suportă modul de blocare (implicit) sau în fundal
 |---|---|
 | `file_path` | Calea absolută către fișier (obligatoriu) |
 | `language` | Cod limbă (`ro`, `en`, `ja` etc.) sau `auto` pentru detectare automată. Implicit: `en` |
-| `output_format` | `text` (implicit), `timestamps`, `json` sau `srt` |
+| `output_format` | `timestamps` (implicit), `text`, `json`, `srt`, `vtt`, `lrc` sau `csv` |
 | `save_to_file` | Salvează transcrierea ca .txt lângă fișierul sursă |
 | `background` | Rulează ca sarcină separată — returnează imediat ID-ul sarcinii. Folosește `check_progress` pentru monitorizare. Recomandat pentru fișiere de peste 10 minute. |
+| `privacy_mode` | Suprascrie modul de confidențialitate pentru acest apel. `true` = doar metadate, niciun text de transcriere nu este transmis. `false` = returnează text chiar dacă `WHISPER_PRIVACY_MODE=true` global. Omite pentru a folosi setarea globală. |
 | `threads` | Suprascrie numărul de fire CPU |
-| `temperature` | Temperatura de eșantionare 0,0–1,0. Implicit 0,0 (determinist). Valori mai mari reduc halucinațiile în audio zgomotos. |
-| `prompt` | Șir de context anterior — îmbunătățește precizia pentru vocabular specific domeniului sau nume de vorbitori. Ex.: `"Nume: Keemstar, DramaAlert."` |
+| `temperature` | Temperatura de eșantionare 0,0–1,0. Implicit 0,0 (determinist). |
+| `prompt` | Șir de context anterior — îmbunătățește precizia pentru vocabular specific domeniului sau nume de vorbitori. |
 | `condition_on_prev_text` | Reactivează condiționarea contextului între segmente. Implicit false. |
 | `beam_size` | Lățimea de căutare beam. Mai mare = mai precis, mai lent. Implicit 5. |
 | `best_of` | Numărul de secvențe candidate evaluate. Implicit 5. |
@@ -181,32 +183,44 @@ Transcrie un singur fișier. Suportă modul de blocare (implicit) sau în fundal
 | `offset_t` | Decalajul de pornire în milisecunde. |
 | `duration` | Durata de procesat în milisecunde de la decalaj. |
 
+**Formate de ieșire:**
+- `timestamps` — segmente cu marcaje de timp, ex. `[00:00:01.230 --> 00:00:04.560]  Bună ziua` (implicit)
+- `text` — text simplu fără coduri de timp
+- `json` — JSON structurat (doar modul de blocare)
+- `srt` — fișier subtitrări SubRip salvat lângă sursă
+- `vtt` — fișier subtitrări WebVTT salvat lângă sursă
+- `lrc` — format LRC versuri/karaoke salvat lângă sursă
+- `csv` — CSV cu marcaje de timp salvat lângă sursă
+
 ---
 
 ### `check_progress`
 Monitorizează o sarcină de transcriere în fundal pornită cu `transcribe_audio` (background=true).
 
-Returnează timpul scurs, ultimul marcaj de timp procesat, procentul și transcrierea completă la finalizare.
+Returnează timpul scurs, ultimul marcaj de timp procesat și transcrierea completă la finalizare.
 
 | Parametru | Descriere |
 |---|---|
 | `job_id` | ID-ul sarcinii returnat de `transcribe_audio` |
+| `privacy_mode` | Suprascrie modul de confidențialitate pentru această verificare. `true` = doar metadate, indiferent de modul în care sarcina a fost pornită. |
 
 ---
 
 ### `start_batch`
-Transcrie automat și secvențial toate fișierele netranscrise dintr-un folder. Sortează după durată (cele mai scurte primele), procesează câte unul ca sarcini în fundal și validează fiecare ieșire.
+Transcrie automat și secvențial toate fișierele netranscrise dintr-un folder. Sortează după durată (cele mai scurte primele), procesează câte unul ca sarcini în fundal și validează fiecare ieșire. Lotul avansează automat după finalizarea fiecărui fișier — nu este necesară interogare.
 
 | Parametru | Descriere |
 |---|---|
 | `folder_path` | Calea către folder (obligatoriu) |
 | `language` | Cod limbă. Implicit: `en` |
 | `threads` | Suprascrie numărul de fire CPU |
+| `output_format` | `timestamps` (implicit) sau `text` |
+| `privacy_mode` | Suprascrie modul de confidențialitate. O confirmare este necesară înainte de începerea lotului; toate fișierele sunt apoi procesate nesupravegheate. Niciun text de transcriere nu este returnat. |
 
 ---
 
 ### `check_batch_progress`
-Monitorizează un lot în execuție. Avansează automat la fișierul următor când cel curent se termină. Returnează progresul general, fișierul curent cu marcaj de timp, ETA și fișierele cu erori.
+Monitorizează un lot în execuție. Avansează automat la fișierul următor când cel curent se termină. Returnează progresul general, fișierul curent cu marcaj de timp și fișierele cu erori.
 
 | Parametru | Descriere |
 |---|---|
@@ -223,17 +237,21 @@ Procesează fișierele unul câte unul cu previzualizare și confirmare înainte
 | `file_index` | Ce fișier să proceseze (începând de la 1). Omite pentru a lista fișierele mai întâi. |
 | `language` | Cod limbă. Implicit: `en` |
 | `recursive` | Include subdirectoare |
+| `output_format` | `timestamps` (implicit) sau `text` |
+| `privacy_mode` | Suprascrie modul de confidențialitate. Confirmare necesară înainte de fiecare fișier; sunt returnate doar metadate. |
 
 ---
 
 ### `generate_subtitles`
-Generează fișiere de subtitrări SRT. Suportă detectarea automată a limbii și ieșire cu traducere în engleză.
+Generează fișiere de subtitrări. Suportă detectarea automată a limbii și ieșire cu traducere în engleză. Generează SRT (compatibilitate maximă) sau WebVTT (web și video HTML5).
 
 | Parametru | Descriere |
 |---|---|
 | `file_path` | Calea către fișier (obligatoriu) |
 | `language` | Cod limbă sau `auto` pentru detectare automată. Implicit: `en` |
-| `translate_to_english` | Generează și `.en.srt` cu traducere în engleză. Se aplică doar când sursa nu este în engleză. |
+| `output_format` | `srt` (implicit) sau `vtt` |
+| `translate_to_english` | Generează și un fișier de subtitrări cu traducere în engleză. Se aplică doar când sursa nu este în engleză. |
+| `background` | Rulează ca sarcină în fundal. Returnează ID sarcină pentru `check_progress`. |
 | `threads` | Suprascrie numărul de fire CPU |
 
 Când ambele sunt solicitate, două fișiere sunt salvate lângă sursă:
@@ -245,7 +263,7 @@ Când ambele sunt solicitate, două fișiere sunt salvate lângă sursă:
 ---
 
 ### `analyze_media`
-Analizează un fișier înainte de transcriere. Returnează durata, dimensiunea, codecul și timpul estimat de transcriere pe CPU și GPU. Pentru foldere, afișează toate fișierele într-un tabel sortabil cu starea transcrierii.
+Analizează fișierele înainte de transcriere. Returnează durata, dimensiunea, codecul și timpul estimat de transcriere pe CPU și GPU. Pentru foldere, afișează toate fișierele într-un tabel sortabil cu starea transcrierii.
 
 | Parametru | Descriere |
 |---|---|
@@ -265,7 +283,7 @@ Listează toate fișierele model Whisper instalate în directorul tău de modele
 ---
 
 ### `download_model`
-Descarcă un model Whisper direct de la Hugging Face în directorul tău de modele. Acceptă numele modelului (ex.: `large-v3-turbo`, `medium.en-q5_0`) și gestionează automat descărcarea. Descarcă doar din spații de nume Hugging Face de încredere. După descărcare, folosește `switch_model` pentru activare.
+Descarcă un model Whisper direct de la Hugging Face în directorul tău de modele. Descarcă doar din spații de nume Hugging Face de încredere. După descărcare, folosește `switch_model` pentru activare.
 
 | Parametru | Descriere |
 |---|---|
@@ -301,14 +319,16 @@ Detectează hardware-ul GPU și confirmă dacă accelerarea Vulkan este disponib
 
 Versiunea Vulkan precompilată activează automat accelerarea GPU. Testat pe AMD Radeon RX Vega 56 (GCN generația 5). Orice GPU cu suport Vulkan 1.0+ ar trebui să funcționeze, inclusiv NVIDIA și Intel Arc.
 
-**Comparație performanță (model medium.en, fișier audio ~5 minute):**
+**Comparație performanță (model large-v3, fișier audio ~14 minute):**
 
 | Hardware | Timp |
 |---|---|
-| Numai CPU (Ryzen 7 2700x, 8 fire) | 8–12 minute |
-| GPU (Vega 56 prin Vulkan) | 20–40 secunde |
+| Numai CPU (Ryzen 7 2700x, 8 fire) | ~22 minute (estimat) |
+| GPU (Vega 56 prin Vulkan) | ~3min 22s |
 
-Utilizarea GPU în timpul transcrierii este de obicei 15–20%, revenind la inactiv între fișiere. CPU-ul se menține la aproximativ 15%.
+Utilizarea GPU în timpul transcrierii este de obicei 15–20%, revenind la inactiv între fișiere.
+
+Suportă Windows 10 și Windows 11.
 
 ---
 
@@ -320,9 +340,25 @@ Pentru cea mai bună precizie multilingvă, folosește modelul `large-v3`. Model
 
 **Exemplu — video în limbă străină cu subtitrări:**
 1. Cere lui Claude să genereze subtitrări cu `language=auto` și `translate_to_english=true`
-2. Whisper detectează limba și generează SRT în limba originală
-3. O a doua trecere generează SRT cu traducere în engleză
-4. Încarcă oricare fișier în VLC prin Subtitrări → Adaugă fișier de subtitrări
+2. Whisper detectează limba și generează SRT sau VTT în limba originală
+3. O a doua trecere generează traducerea în engleză
+4. Încarcă SRT în VLC prin Subtitrări → Adaugă fișier de subtitrări, sau folosește VTT în orice player web
+
+---
+
+## Confidențialitate și conformitate
+
+whisper-windows-mcp include o arhitectură de confidențialitate integrată pentru conținut sensibil și reglementat.
+
+**Audio și video nu părăsesc niciodată calculatorul tău.** Această garanție este necondiționată.
+
+**Textul de transcriere** este altceva — când este returnat inline într-un răspuns al instrumentului, este procesat de API-ul Claude. Pentru majoritatea utilizatorilor acesta este comportamentul așteptat. Pentru conținut reglementat (medical, juridic, financiar, corporativ) modul de confidențialitate previne aceasta.
+
+**Modul de confidențialitate** restricționează toate răspunsurile instrumentelor doar la metadate (numele fișierului, numărul de cuvinte, calea de salvare). Niciun text de transcriere nu este transmis la API-ul Claude în nicio circumstanță. Activează per apel prin `privacy_mode=true` în orice instrument de transcriere, sau global prin `WHISPER_PRIVACY_MODE=true` în configurație.
+
+**Poarta de consimțământ** — la prima utilizare per sesiune în modul standard, înainte de returnarea oricărui text de transcriere este afișată o dezvăluire completă de confidențialitate. Trebuie să confirmi explicit înainte de a continua. Setează `WHISPER_CONSENT_ACKNOWLEDGED=true` în configurație pentru a sări aceasta pentru conținut non-sensibil.
+
+Vezi [PRIVACY.md](PRIVACY.md) pentru ghidul complet de conformitate (HIPAA, GDPR, privilegiu avocat-client, FERPA, SOX, PCI-DSS).
 
 ---
 
@@ -340,7 +376,30 @@ Acest instrument a fost creat pentru a minimiza interacțiunile cu API-ul Claude
 | `WHISPER_MODEL` | Calea către fișierul model .bin (obligatoriu) |
 | `WHISPER_THREADS` | Suprascrie numărul de fire CPU |
 | `FFMPEG_PATH` | Calea către ffmpeg dacă nu este în PATH-ul sistemului |
-| `WHISPER_PRIVACY_MODE` | **Planificat.** Când este setat la `true`, răspunsurile instrumentelor returnează doar metadate — niciun text de transcriere nu este returnat lui Claude. Pentru conținut reglementat sau confidențial. Vezi [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_PRIVACY_MODE` | Când `true`, răspunsurile instrumentelor returnează doar metadate — niciun text de transcriere nu este transmis lui Claude. Pentru conținut reglementat sau confidențial. Poate fi suprascris per apel prin parametrul `privacy_mode`. Vezi [PRIVACY.md](PRIVACY.md). |
+| `WHISPER_CONSENT_ACKNOWLEDGED` | Când `true`, suprimă dezvăluirea de consimțământ unică per sesiune înainte de returnarea textului de transcriere. Setează după ce ai revizuit limitele de confidențialitate când memento-ul nu mai este necesar. Nu are efect când modul de confidențialitate este activ. |
+
+---
+
+## Securitate
+
+**Verificarea binarului.** Pentru a verifica integritatea binarului whisper-cli.exe din versiunea precompilată, verifică hash-ul său SHA256 în PowerShell:
+
+```powershell
+Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
+```
+
+Hash-ul așteptat pentru binarul de versiune este documentat pe [pagina de versiuni](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
+
+**Validarea intrărilor.** Toate căile de fișiere sunt validate înainte de utilizare — căile UNC (`\\server\share`) și secvențele de traversare a directoarelor (`..`) sunt respinse. Fișierele peste 10 GB sunt respinse pentru a preveni epuizarea resurselor.
+
+**Conștientizarea injecției de transcriere.** Fișierele audio pot conține conținut vorbit care, atunci când este transcris, seamănă cu instrucțiuni. Apărările încorporate ale Claude gestionează acest lucru, dar serverul MCP în sine tratează conținutul de transcriere ca date — niciodată ca instrucțiuni.
+
+**Descărcările de modele sunt restricționate.** Instrumentul `download_model` descarcă doar din două spații de nume Hugging Face de încredere (`ggerganov/whisper.cpp` și `ggml-org`). URL-urile arbitrare sunt respinse. Redirecționările sunt validate față de o listă de permise înainte de a fi urmate.
+
+**Schimbarea modelelor este sandboxată.** `switch_model` acceptă doar fișiere `.bin` în directorul de modele configurat. Căile din afara acelui director sunt respinse.
+
+Vezi [SECURITY.md](SECURITY.md) pentru politica completă de securitate.
 
 ---
 
@@ -358,33 +417,11 @@ Listă de verificare rapidă:
 
 ---
 
-## Securitate și confidențialitate
-
-whisper-windows-mcp a fost proiectat cu securitatea ca principiu central.
-
-**Audio-ul nu părăsește niciodată calculatorul tău.** Niciun fișier audio sau video, cale de fișier sau telemetrie nu este transmis vreunui server. Niciun API cloud nu este necesar pentru funcționalitatea de bază.
-
-**Textul de transcriere și limita API.** Când un răspuns al instrumentului include text de transcriere, acel text este procesat de API-ul Claude — părăsește calculatorul tău local. Pentru majoritatea utilizatorilor (conținut public, podcasturi, înregistrări streaming) acesta este un comportament așteptat. Dacă gestionezi înregistrări medicale, juridice, financiare sau alte înregistrări reglementate, vezi [PRIVACY.md](PRIVACY.md) pentru îndrumări privind conformitatea și opțiuni de configurare.
-
-Variabila de mediu `WHISPER_PRIVACY_MODE` este planificată și va limita toate răspunsurile instrumentelor doar la metadate (numele fișierului, durata, numărul de cuvinte) — niciun text de transcriere nu va fi returnat lui Claude. Aceasta este configurația corectă pentru conținut reglementat sau confidențial.
-
-**Validarea intrărilor.** Toate căile de fișiere sunt validate înainte de utilizare — căile UNC (`\\server\share`) și secvențele de traversare a directoarelor (`..`) sunt respinse. Fișierele peste 10 GB sunt respinse pentru a preveni epuizarea resurselor.
-
-**Conștientizarea injecției de transcriere.** Fișierele audio pot conține conținut vorbit care, atunci când este transcris, seamănă cu instrucțiuni. Apărările încorporate ale Claude gestionează acest lucru, dar merită să știi că serverul MCP în sine tratează conținutul de transcriere ca date — niciodată ca instrucțiuni.
-
-**Descărcările de modele sunt restricționate.** Instrumentul `download_model` descarcă doar din două spații de nume Hugging Face de încredere (`ggerganov/whisper.cpp` și `ggml-org`). URL-urile arbitrare sunt respinse. Redirecționările sunt validate față de o listă de permise înainte de a fi urmate.
-
-**Schimbarea modelelor este sandboxată.** `switch_model` acceptă doar fișiere `.bin` în directorul de modele configurat. Căile din afara acelui director sunt respinse.
-
-**Fără dependențe noi de rețea.** Descărcările de modele folosesc `https`-ul integrat al Node.js — nicio bibliotecă HTTP externă nu este adăugată la pachet.
-
----
-
 ## Licență
 
 **Utilizare non-comercială:** MIT — gratuit pentru uz personal, educațional și non-comercial. Vezi [LICENSE](LICENSE).
 
-**Utilizare comercială:** Este necesar un acord de licență comercială separat pentru orice utilizare în afaceri, profesională sau generatoare de venituri. Vezi [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) pentru termeni și informații de contact.
+**Utilizare comercială:** Este necesar un acord de licență comercială separat pentru orice utilizare în afaceri, profesională sau generatoare de venituri. Vezi [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) pentru termeni și informații de contact.
 
 ## Contribuții
 

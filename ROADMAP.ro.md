@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Foaie de parcurs
 
-Versiunea curentă: **v2.2.0**
+Versiunea curentă: **v2.3.0**
 
 ---
 
@@ -54,7 +54,7 @@ Arhitectură proces detașat: `transcribe_audio` cu `background=true` pornește 
 ### ✅ v2.0.0 — Căi sigure Unicode + SRT în fundal
 **Nume fișiere Unicode:** Fișierele cu caractere non-ASCII în nume cauzau eșecuri silențioase ale transcrierii în fundal. Remediat prin direcționarea tuturor ieșirilor printr-o cale temporară igienizată bazată pe ID sarcină, apoi mutarea rezultatului la destinația corectă după finalizare.
 
-**SRT în modul fundal:** `spawnDetached` anterior codifica rigid `-otxt` indiferent de formatul solicitat, iar `generate_subtitles` bloca sincron și atingea limita de timp MCP de 4 minute pe fișiere mai lungi. Remediat prin adăugarea parametrului `outputFormat` la `spawnDetached`, suportând ieșire `text` și `srt` în modul fundal.
+**SRT în modul fundal:** `spawnDetached` anterior codifica rigid `-otxt` indiferent de formatul solicitat. Remediat prin adăugarea parametrului `outputFormat` la `spawnDetached`, suportând ieșire `text` și `srt` în modul fundal.
 
 ### ✅ v2.0.1 — Corecții erori (incluse în v2.2.0)
 - `--max-context 0` codificat rigid în `buildArgs` și `spawnDetached` — previne buclele de halucinație pe audio lung.
@@ -73,46 +73,139 @@ Arhitectură proces detașat: `transcribe_audio` cu `background=true` pornește 
 - Instrument `switch_model` — validează extensia `.bin`, restricție director, verificare blocare proces.
 - `recommendedModel()` actualizat pentru a recomanda `large-v3-turbo` pentru VRAM 6GB+.
 
-### ✅ v2.2.0 — Extindere calitate, parametri și hardware (curent)
+### ✅ v2.2.0 — Extindere calitate, parametri și hardware
 - Interfață `WhisperOptions` înlocuind argumentele poziționale în `buildArgs`.
 - Parametri noi în `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - Parametri noi în `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
 - `spawnDetached` refactorizat — toate indicatoarele de calitate sunt acum aplicate în modul fundal/lot.
 - Ieșire lot corectată — `readBatchProgress` acum mută ieșirea temporară la destinația finală înainte de validare.
 
+**Notă compatibilitate indicatoare:** `gpu_device` / `--device` a fost adăugat în whisper.cpp v1.8.4. Binarul Vulkan precompilat în versiuni este de generație v1.8.3 — acest parametru este acceptat de instrument dar nu va avea efect până când utilizatorii nu actualizează la un binar v1.8.4+.
+
+### ✅ v2.2.2 — Patch
+- Corecție licență duală — LICENSE și LICENSE-COMMERCIAL.md corectate.
+- Corecții minore de documentație.
+
+### ✅ v2.3.0 — Avansare automată lot, arhitectură confidențialitate, extindere formate de ieșire
+
+**Avansare automată lot (corecție bug critic):** `start_batch` necesita anterior interogare activă pentru a avansa coada. Un handler `on('exit')` este acum atașat fiecărui proces copil whisper-cli pornit. Când procesul iese, lotul avansează automat prin callback-ul de ieșire cu zero costuri de interogare și zero apeluri API consumate. Un mutex previne lansarea dublă între handler-ul de ieșire concurrent și apelurile `check_batch_progress`.
+
+**Arhitectură confidențialitate:**
+- Variabila de mediu `WHISPER_PRIVACY_MODE` — când `true`, toate răspunsurile instrumentelor returnează doar metadate (numele fișierului, numărul de cuvinte, calea de salvare). Niciun text de transcriere nu este transmis vreodată la API-ul Claude. Transcrierile există doar ca fișiere locale.
+- Variabila de mediu `WHISPER_CONSENT_ACKNOWLEDGED` — când `true`, suprimă poarta de consimțământ unică per sesiune pentru conținut non-sensibil.
+- Parametrul `privacy_mode` per apel în `transcribe_audio`, `transcribe_batch`, `start_batch` și `check_progress`. Suprascrie variabila de mediu globală în ambele direcții. Nu necesită repornire pentru a comuta per apel.
+- Poarta modului de confidențialitate (`checkPrivacyGate()`) — se activează înainte de fiecare operațiune când modul de confidențialitate efectiv este activ.
+- Poarta de consimțământ sesiune (`transcriptPolicy()`) — se activează o dată per sesiune înainte de primul apel care returnează transcriere în modul standard.
+- `PRIVACY.md` — documentație completă de conformitate acoperind HIPAA, GDPR, privilegiu avocat-client, FERPA, SOX, PCI-DSS și NDA/secret comercial.
+
+**Extindere formate de ieșire:**
+- `vtt` — ieșire WebVTT prin `-ovtt`. Disponibil în `transcribe_audio`, `generate_subtitles`, `start_batch` și modul fundal.
+- `lrc` — format LRC versuri/karaoke prin `-olrc`. Disponibil în `transcribe_audio` și modul fundal.
+- `csv` — CSV cu marcaje de timp prin `-ocsv`. Disponibil în `transcribe_audio` și modul fundal.
+- `output_format` implicit schimbat din `"text"` în `"timestamps"` în toate instrumentele și căile de cod.
+
+**Corecții bug:**
+- Bug 1: `output_format` nu era transmis sarcinilor în fundal — implicit `"text"` era folosit indiferent de formatul solicitat. Remediat prin schimbarea implicită la `"timestamps"` și transmitere corectă.
+- Bug 2: `catch {}` silențios în operațiunea de mutare a ieșirii sarcinii în fundal înghițea eșecurile. Adăugat verificare explicită `existsSync` cu mesaj de eșec detaliat după mutare.
+- Bug 3: Comentariu de design adăugat la punctul de lansare în fundal documentând de ce poarta de consimțământ este intenționat amânată la `check_progress` pentru sarcinile în fundal fără mod de confidențialitate.
+
+**Suplimentar:**
+- Curățare automată director temporar — `cleanupOldJobFiles()` rulează la pornire, șterge fișierele `.json` și `.log` mai vechi de 7 zile din `%TEMP%\whisper-mcp-jobs\`.
+- `check_config` raportează acum starea modului de confidențialitate.
+- Jurnalul de pornire raportează modul de confidențialitate activat/dezactivat.
+
 ---
 
-## Bug critic — Avansare automată lot (confirmat, în așteptarea remedierii)
+## Planificat — v2.4.0: Migrare la Bun
 
-### Lotul nu avansează fără interogare activă
+Migrează runtime-ul de la Node.js la [Bun](https://bun.sh).
 
-`start_batch` nu avansează autonom coada între fișiere. Lotul avansează doar când este apelat `check_batch_progress`. Fără interogare, lotul se oprește pe termen nedefinit după fiecare fișier.
+Deoarece Claude Desktop pornește serverul MCP din nou la fiecare pornire de sesiune, timpul de pornire este pe calea critică. Bun rulează TypeScript nativ fără pas de compilare, pornește semnificativ mai rapid decât Node și are I/O mai rapid.
 
-**Remediere planificată — Opțiunea B (callback ieșire):** Atașează un handler `on('exit')` la procesul copil whisper-cli pornit. Când procesul iese, apelează imediat logica de avansare pentru a valida ieșirea și a porni sarcina următoare.
+**Ce se schimbă:**
+- Elimină pasul de build `tsc` și directorul `dist/`
+- Utilizatorii rulează direct codul sursă TypeScript
+- `tsconfig.json` devine opțional
+- Scripturi `package.json` actualizate
+- Flux de lucru publicare npm actualizat
 
-**Soluție temporară curentă:** Apelează `check_batch_progress` în mod repetat până când lotul se finalizează.
-
----
-
-## Planificat — Arhitectură confidențialitate (înainte de migrarea la Bun)
-
-### Variabila de mediu `WHISPER_PRIVACY_MODE`
-Adaugă `WHISPER_PRIVACY_MODE` ca variabilă de mediu în `claude_desktop_config.json`. Când este activată, toate răspunsurile instrumentelor returnează doar metadate — niciun text de transcriere nu este inclus.
-
-### Poartă de consimțământ pentru conținut de transcriere
-Când `WHISPER_PRIVACY_MODE` nu este activat (implicit), orice răspuns al instrumentului care include text de transcriere trebuie precedat de o dezvăluire la prima utilizare per sesiune.
-
-### Documentația `PRIVACY.md`
-Creează `PRIVACY.md` în rădăcina depozitului cu îndrumări complete privind confidențialitatea și cadre de conformitate.
-
-### Curățare automată director temporar
-Adaugă curățare automată a fișierelor de sarcini finalizate după o fereastră de retenție configurabilă (implicit: 7 zile).
+**Ce nu se schimbă:**
+- Codul sursă `src/index.ts` — Bun este compatibil cu TypeScript existent și API-urile Node.js integrate
+- Tot comportamentul instrumentelor și formatele de ieșire
+- Configurația Claude Desktop pentru utilizatorii finali
 
 ---
 
-## Planificat — Migrare la Bun
+## Planificat — v2.5.0: Formate de ieșire îmbunătățite pentru integrarea instrumentelor externe
 
-Migrează runtime-ul de la Node.js la [Bun](https://bun.sh) după finalizarea arhitecturii de confidențialitate și înainte de adăugările de funcții v2.3.0. Bun rulează TypeScript nativ fără pas de compilare și pornește semnificativ mai rapid decât Node.
+Suport extins pentru formate de ieșire destinat fluxurilor de lucru de analiză și integrare din aval. Domeniul exact va fi definit pe baza feedback-ului utilizatorilor după v2.3.0.
+
+---
+
+## Planificat — v2.6.0: Modul de transcriere live din microfon
+
+Transcriere în timp real din intrare microfon live. Transmite audio de la un dispozitiv de înregistrare selectat la whisper în bucăți, returnând segmente de transcriere continue pe măsură ce se finalizează.
+
+**Constrângeri de proiectare:**
+- Selecția dispozitivului trebuie să fie explicită — fără captare silențioasă a dispozitivului implicit
+- Utilizatorul trebuie să poată opri fluxul printr-o interacțiune Claude Desktop
+- Nu trebuie să intre în conflict cu constrângerea unei singure instanțe whisper simultan
+- Compromisul latență vs precizie trebuie să fie configurabil de utilizator
+
+**Status:** Faza de proiectare. Depinde de un API de streaming stabil în whisper.cpp.
+
+---
+
+## Planificat — Versiuni viitoare
+
+### TinyDiarize
+Suport pentru indicatorul `--tinydiarize` cu variante de model care suportă `tdrz` (ex.: `large-v2-tdrz`). Spre deosebire de indicatorul `--diarize` stereo, TinyDiarize funcționează pe înregistrări mono. Necesită descărcarea unui variant de model special. Precizie mai mică decât diarizarea bazată pe pyannote, dar zero dependențe suplimentare în afara fișierului model.
+
+**Status:** Planificat. Depinde de `download_model` care suportă variantele de model tdrz.
+
+### Transcriere URL YouTube
+Transcriere directă din URL-uri YouTube prin yt-dlp. Descarcă audio și transcrie într-un singur pas. Necesită yt-dlp instalat și în PATH.
+
+**Constrângere de proiectare:** yt-dlp este opțional. Instrumentul trebuie să degradeze elegant cu instrucțiuni clare de instalare dacă nu este găsit. Fără modificări ale funcționalității de bază pentru utilizatorii care nu au nevoie de aceasta.
+
+### Instrumente flux de lucru proiect video
+Pentru utilizatorii care gestionează proiecte mari de editare video cu directoare de clipuri sursă și editate:
+
+1. Scanează directorul sursă și subdirectorul de clipuri
+2. Potrivire fuzzy a transcrierilor clipurilor editate față de transcrierile sursă pentru a localiza punctele de origine
+3. Afișează nume de fișiere descriptive sugerate de Claude bazate pe conținutul transcrierii, necesitând confirmarea explicită a utilizatorului înainte de orice redenumire
+4. Căutare transcrieri în directorul proiectului cu rezultate în coduri de timp
+
+**Constrângeri de proiectare:**
+- Fișierele sursă nu sunt **niciodată redenumite sau modificate**
+- Toate redenumirile necesită **confirmarea explicită a utilizatorului**
+- Căutarea este un instrument independent, utilizabil independent
+- Analiza și potrivirea au loc local — Claude este invocat doar când utilizatorul revizuiește rezultatele, minimizând apelurile API
+
+**Status:** Faza de proiectare.
+
+### Diarizare vorbitori (pyannote-audio)
+Diarizare completă mono cu etichete ID vorbitor — marchează tranzițiile vorbitorilor pe toată înregistrarea indiferent de configurația canalelor. Diferit de indicatorul `--diarize` stereo integrat (v2.2.0) și TinyDiarize.
+
+**Implementare:** Necesită [pyannote-audio](https://github.com/pyannote/pyannote-audio) — bibliotecă bazată pe Python cu cerință de token acces modele Hugging Face. Stivă de dependențe complet separată.
+
+**Status:** Funcție avansată opțională cu propria documentație de configurare. Nu este inclusă în pachetul principal.
+
+### Traducere în limbi non-engleze
+Indicatorul `--translate` al Whisper țintește doar engleza. Suportarea limbilor țintă arbitrare necesită un API de traducere extern sau un model de traducere local.
+
+**Opțiuni luate în considerare:** LibreTranslate (auto-găzduit, local prioritar), traducere LLM local sau documentație explicită în afara domeniului.
+
+**Status:** Amânat în așteptarea deciziei de proiectare privind local prioritar vs dependența API.
+
+### Curățare și formatare transcrieri
+Pipeline de post-procesare:
+- Eliminarea cuvintelor de umplutură și a pornirilor false (opțional, controlat de utilizator)
+- Pauze de paragraf la granițele naturale ale subiectelor
+- Formatare conștientă de vorbitor combinată cu ieșire diarizare
+- Export în PDF sau DOCX
+
+**Status:** Planificat. Varianta conștientă de vorbitor depinde de diarizare.
 
 ---
 
@@ -122,54 +215,19 @@ whisper-windows-mcp folosește licențiere duală.
 
 **Utilizare non-comercială:** MIT — gratuit pentru uz personal, educațional și non-comercial. Vezi [LICENSE](LICENSE).
 
-**Utilizare comercială:** Este necesar un acord de licență comercială separat. Vezi [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
-
-`WHISPER_PRIVACY_MODE` pentru implementări în sectoare reglementate este în curs de dezvoltare și planificat pentru o versiune viitoare. Vezi [PRIVACY.md](PRIVACY.md) pentru îndrumări actuale.
-
-## Planificat — v2.3.0: Extindere formate de ieșire
-
-### Format subtitrări VTT
-Ieșire WebVTT (`.vtt`) împreună cu SRT. Standard web folosit de YouTube, HTML5 `<video>` și majoritatea playerelor moderne.
-
-### Format LRC
-Ieșire în format LRC (`.lrc`) versuri/karaoke prin `-olrc`.
-
-### Format CSV
-Ieșire CSV (`.csv`) prin `-ocsv`. Date tabulare structurate cu sincronizare segmente.
-
----
-
-## Planificat — Versiuni viitoare
-
-### TinyDiarize
-Suport pentru indicatorul `--tinydiarize` cu variante de model care suportă `tdrz`. Funcționează pe înregistrări mono spre deosebire de indicatorul `--diarize` stereo.
-
-### Transcriere URL YouTube
-Transcriere directă din URL-uri YouTube prin yt-dlp. Necesită yt-dlp instalat și în PATH.
-
-### Instrumente flux de lucru proiect video
-Pentru utilizatorii care gestionează proiecte mari de editare video cu directoare de clipuri sursă și editate. Fișierele sursă nu sunt niciodată redenumite sau modificate fără confirmarea explicită a utilizatorului.
-
-### Diarizare vorbitori (pyannote-audio)
-Diarizare completă mono cu etichete ID vorbitor. Necesită pyannote-audio — bibliotecă bazată pe Python cu cerință de token acces modele Hugging Face.
-
-### Traducere în limbi non-engleze
-Indicatorul `--translate` al Whisper țintește doar engleza. Suportarea limbilor țintă arbitrare necesită un API de traducere extern sau un model de traducere local.
-
-### Curățare și formatare transcrieri
-Pipeline de post-procesare: eliminarea cuvintelor de umplutură, pauze de paragraf la granițele naturale ale subiectelor, formatare conștientă de vorbitor, export în PDF sau DOCX.
+**Utilizare comercială:** Este necesar un acord de licență comercială separat pentru orice utilizare în afaceri, profesională sau generatoare de venituri. Vezi [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) pentru termeni și informații de contact.
 
 ---
 
 ## Distribuție
 
-Disponibil pe [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org) și [Glama](https://glama.ai).
+Disponibil pe [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai) și [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers).
 
 ---
 
 ## Documentație multilingvă
 
-Documentația în japoneză, coreeană, vietnameză, indoneziană, ucraineană, portugheză braziliană, spaniolă, poloneză și română este menținută în paralel cu engleza. Următoarele fișiere trebuie actualizate pentru a corespunde documentelor în engleză după fiecare versiune:
+După fiecare versiune, următoarele fișiere trebuie actualizate pentru a corespunde documentelor în engleză:
 
 **Japoneză (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 

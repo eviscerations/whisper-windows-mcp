@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Peta Jalan
 
-Versi saat ini: **v2.2.0**
+Versi saat ini: **v2.3.0**
 
 ---
 
@@ -54,104 +54,75 @@ Arsitektur proses terpisah: `transcribe_audio` dengan `background=true` menelurk
 ### ✅ v2.0.0 — Jalur Aman Unicode + SRT Latar Belakang
 **Nama file Unicode:** File dengan karakter non-ASCII dalam nama file menyebabkan transkripsi latar belakang gagal secara diam-diam. Diperbaiki dengan merutekan semua output melalui jalur temp yang disanitasi berbasis ID tugas, kemudian memindahkan hasilnya ke tujuan yang benar setelah selesai.
 
-**SRT dalam mode latar belakang:** `spawnDetached` sebelumnya mengkodekan keras `-otxt` terlepas dari format yang diminta, dan `generate_subtitles` memblokir secara sinkron dan mencapai timeout MCP 4 menit pada file yang lebih panjang. Diperbaiki dengan menambahkan parameter `outputFormat` ke `spawnDetached`, mendukung output `text` dan `srt` dalam mode latar belakang.
+**SRT dalam mode latar belakang:** `spawnDetached` sebelumnya mengkodekan keras `-otxt` terlepas dari format yang diminta. Diperbaiki dengan menambahkan parameter `outputFormat` ke `spawnDetached`, mendukung output `text` dan `srt` dalam mode latar belakang.
 
 ### ✅ v2.0.1 — Perbaikan Bug (dikirimkan dalam v2.2.0)
-- `--max-context 0` dikodekan keras di `buildArgs` dan `spawnDetached` — mencegah loop halusinasi pada audio panjang. `--condition-on-previous-text` dan `--no-context` bukan flag valid dalam binary saat ini (era v1.8.3) — `--max-context N` adalah flag yang benar.
+- `--max-context 0` dikodekan keras di `buildArgs` dan `spawnDetached` — mencegah loop halusinasi pada audio panjang.
 - `--no-speech-thold 0.6` dikodekan keras di kedua fungsi — segmen di bawah ambang kepercayaan diperlakukan sebagai keheningan daripada konten yang dihalusinasi.
 - Validasi jalur (`validateInputPath`) — menolak jalur UNC dan traversal `..`.
 - Penjaga ukuran file `MAX_FILE_SIZE_MB = 10240`.
 - Komentar keamanan injeksi transkrip di `transcribeSingle`.
-- Perintah CLI batch yang rusak diperbaiki di TROUBLESHOOTING.md — mendokumentasikan pendekatan konversi FFmpeg yang benar dan metode `Start-Process -RedirectStandardOutput`.
+- Perintah CLI batch yang rusak diperbaiki di TROUBLESHOOTING.md.
 
 ### ✅ v2.1.0 — Suite Manajemen Model (dikirimkan dalam v2.2.0)
 - `WHISPER_MODEL` diubah dari `const` ke `let` (dapat diubah dalam sesi).
 - `MODEL_REGISTRY` — 16 model, varian presisi penuh dan terkuantisasi, URL unduhan Hugging Face.
 - `ALLOWED_HF_PREFIXES` — daftar putih URL yang membatasi unduhan ke namespace `ggerganov/whisper.cpp` dan `ggml-org`.
 - Alat `list_models` — memindai direktori model, menampilkan model aktif, ukuran, kasus penggunaan, unduhan yang tersedia.
-- Alat `download_model` — mengunduh dari Hugging Face via `https` bawaan Node.js, penggantian nama atomik (perbaikan race condition pelepasan file handle Windows).
+- Alat `download_model` — mengunduh dari Hugging Face via `https` bawaan Node.js, penggantian nama atomik.
 - Alat `switch_model` — memvalidasi ekstensi `.bin`, batasan direktori, pemeriksaan kunci proses.
 - `recommendedModel()` diperbarui untuk merekomendasikan `large-v3-turbo` untuk VRAM 6GB+.
 
-### ✅ v2.2.0 — Perluasan Kualitas, Parameter, dan Hardware (saat ini)
+### ✅ v2.2.0 — Perluasan Kualitas, Parameter, dan Hardware
 - Interface `WhisperOptions` menggantikan argumen posisional di `buildArgs`.
 - Parameter baru di `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - Parameter baru di `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
-- `spawnDetached` direfaktor — semua flag kualitas sekarang diterapkan dalam mode latar belakang/batch.
-- `runSrtPass` diperbarui untuk menerima `extraOpts`.
-- Perbaikan output batch — `readBatchProgress` sekarang memindahkan output temp ke tujuan akhir sebelum memvalidasi (ini adalah akar penyebab semua hasil batch "gagal").
+- `spawnDetached` direfaktor — semua flag kualitas diterapkan dalam mode latar belakang/batch.
+- Perbaikan output batch — `readBatchProgress` sekarang memindahkan output temp ke tujuan akhir sebelum memvalidasi.
 
-**Catatan kompatibilitas flag:** `gpu_device` / `-g` ditambahkan dalam whisper.cpp v1.8.4. Binary Vulkan yang sudah dikompilasi dalam rilis adalah era v1.8.3 — parameter ini diterima oleh alat tetapi tidak akan berpengaruh sampai pengguna memperbarui ke binary v1.8.4+.
+**Catatan kompatibilitas flag:** `gpu_device` / `--device` ditambahkan dalam whisper.cpp v1.8.4. Binary Vulkan yang sudah dikompilasi dalam rilis adalah era v1.8.3 — parameter ini diterima oleh alat tetapi tidak akan berpengaruh sampai pengguna memperbarui ke binary v1.8.4+.
 
-**Flag valid yang dikonfirmasi dalam binary saat ini (era v1.8.3):**
-`--max-context`, `--no-speech-thold`, `--processors`, `--offset-t`, `--duration`, `--best-of`, `--beam-size`, `--diarize`, `--tinydiarize`, `--temperature`, `--prompt`, flag VAD.
+### ✅ v2.2.2 — Patch
+- Perbaikan lisensi ganda — LICENSE dan LICENSE-COMMERCIAL.md dikoreksi.
+- Koreksi dokumentasi minor.
 
-**Tidak ada dalam binary saat ini:** `--no-context` (gunakan `--max-context 0`), `--condition-on-previous-text` (hanya nama Python API), `--gpu-device` / `-g` (v1.8.4+).
+### ✅ v2.3.0 — Kemajuan Otomatis Batch, Arsitektur Privasi, Perluasan Format Output
 
----
+**Kemajuan otomatis batch (perbaikan bug kritis):** `start_batch` sebelumnya memerlukan polling aktif untuk maju melalui antrian. Handler `on('exit')` kini dilampirkan ke setiap proses anak whisper-cli yang ditelurkan. Saat proses keluar, batch maju sendiri segera melalui exit callback tanpa overhead polling dan tanpa panggilan API yang dikonsumsi. Mutex mencegah double-spawn antara exit handler + panggilan `check_batch_progress` yang bersamaan.
 
-## Bug Kritis — Kemajuan Otomatis Batch (Dikonfirmasi, Perbaikan Tertunda)
+**Arsitektur privasi:**
+- Variabel lingkungan `WHISPER_PRIVACY_MODE` — saat `true`, semua respons alat hanya mengembalikan metadata (nama file, jumlah kata, jalur penyimpanan). Tidak ada teks transkrip yang pernah dikirimkan ke API Claude. Transkrip hanya ada sebagai file lokal.
+- Variabel lingkungan `WHISPER_CONSENT_ACKNOWLEDGED` — saat `true`, melewati gerbang persetujuan sesi satu kali untuk konten yang tidak sensitif.
+- Parameter per-panggilan `privacy_mode` pada `transcribe_audio`, `transcribe_batch`, `start_batch`, dan `check_progress`. Menggantikan variabel lingkungan global dalam kedua arah. Tidak perlu restart untuk toggle per-panggilan.
+- Gerbang mode privasi (`checkPrivacyGate()`) — aktif sebelum setiap operasi saat mode privasi efektif aktif. Dipersenjatai pada panggilan pertama (menampilkan pengungkapan), dibersihkan pada panggilan kedua (mengizinkan). Direset setelah setiap operasi. Sepenuhnya independen dari gerbang persetujuan sesi.
+- Gerbang persetujuan sesi (`transcriptPolicy()`) — aktif sekali per sesi sebelum panggilan pertama yang mengembalikan transkrip dalam mode standar. Dikonsumsi oleh flag `sessionConsentGiven`.
+- `PRIVACY.md` — dokumentasi kepatuhan lengkap mencakup HIPAA, GDPR, hak istimewa pengacara-klien, FERPA, SOX, PCI-DSS, dan NDA/rahasia dagang.
+- Peringatan privasi deskripsi alat pada semua alat yang mengembalikan transkrip.
 
-### Batch Tidak Maju Tanpa Polling Aktif
+**Perluasan format output:**
+- `vtt` — output subtitle WebVTT via `-ovtt`. Tersedia di `transcribe_audio`, `generate_subtitles`, `start_batch`, dan mode latar belakang.
+- `lrc` — format lirik/karaoke LRC via `-olrc`. Tersedia di `transcribe_audio` dan mode latar belakang.
+- `csv` — CSV dengan timestamp via `-ocsv`. Tersedia di `transcribe_audio` dan mode latar belakang.
+- Default `output_format` diubah dari `"text"` ke `"timestamps"` di semua alat dan jalur kode. Teks biasa kini opt-in.
 
-`start_batch` tidak secara otonom maju melalui antrian antar file. Batch hanya berlanjut saat `check_batch_progress` dipanggil. Tanpa polling, batch macet tanpa batas setelah setiap file — whisper-cli.exe keluar, tidak ada proses baru yang ditelurkan, dan antrian tidak maju.
+**Perbaikan bug:**
+- Bug 1: `output_format` tidak diteruskan ke tugas latar belakang — default `"text"` digunakan terlepas dari format yang diminta. Diperbaiki dengan mengubah default ke `"timestamps"` dan meneruskannya dengan benar.
+- Bug 2: `catch {}` diam dalam operasi pemindahan output tugas latar belakang menelan kegagalan. Menambahkan pemeriksaan `existsSync` eksplisit dengan pesan kegagalan terperinci setelah pemindahan.
+- Bug 3: Komentar desain ditambahkan di titik spawn latar belakang yang mendokumentasikan mengapa gerbang persetujuan sengaja ditangguhkan ke `check_progress` untuk tugas latar belakang non-privasi.
 
-Ini merusak pemrosesan batch semalaman tanpa pengawasan, yang merupakan tujuan desain inti alat, dan secara langsung melanggar prinsip desain meminimalkan panggilan Claude API. Batch 95 file klip pendek memerlukan sekitar 200 panggilan polling selama 100 menit untuk selesai.
-
-**Akar penyebab:** `readBatchProgress` berisi semua logika kemajuan antrian. Ini hanya dieksekusi saat `check_batch_progress` dipanggil secara eksplisit. Tidak ada timer latar belakang, pengawas file, atau loop otonom.
-
-**Perbaikan yang direncanakan — Opsi B (exit callback, sangat disukai):** Lampirkan handler `on('exit')` ke proses anak whisper-cli yang ditelurkan. Saat proses keluar, segera panggil logika kemajuan untuk memvalidasi output dan menelurkan tugas berikutnya. Berbasis event, terpicu tepat sekali per penyelesaian file, tanpa overhead polling, tanpa panggilan API yang dikonsumsi.
-
-**Opsi A (hanya cadangan):** `setInterval` latar belakang dengan interval polling berbasis durasi yang diturunkan dari data durasi FFprobe yang sudah ada dalam status batch JSON. Ukuran file bukan proksi yang andal untuk durasi.
-
-**Batasan tambahan:** Perbaikan tidak boleh menelurkan whisper-cli.exe kedua saat satu sudah berjalan — kunci proses harus dihormati dalam jalur kemajuan otomatis.
-
-**Solusi sementara (saat ini):** Panggil `check_batch_progress` berulang kali hingga batch selesai. Sekitar satu polling per file diperlukan.
-
----
-
-## Direncanakan — Arsitektur Privasi (Sebelum Migrasi Bun)
-
-Perubahan ini harus dikirimkan sebelum migrasi Bun dan sebelum perubahan lisensi apa pun yang memfasilitasi adopsi komersial atau perusahaan. Mengirimkan alat tingkat perusahaan tanpa perlindungan kepatuhan yang telah diselesaikan menciptakan kewajiban bagi pengguna di industri yang diatur.
-
-### Variabel Lingkungan `WHISPER_PRIVACY_MODE`
-Alat saat ini menjamin bahwa tidak ada **audio** yang meninggalkan mesin. Ini tidak memperluas jaminan ini ke **teks transkrip** — saat konten transkrip dikembalikan sebaris dalam respons alat, teks tersebut diproses oleh API Claude dan meninggalkan lingkungan lokal.
-
-Celah ini tidak terlihat oleh pengguna yang secara wajar mengartikan "tidak ada data yang meninggalkan mesin" mencakup semua konten yang berasal dari audio mereka.
-
-Tambahkan `WHISPER_PRIVACY_MODE` sebagai variabel lingkungan di `claude_desktop_config.json`. Saat diaktifkan:
-- Semua respons alat hanya mengembalikan metadata: nama file, durasi, jumlah kata, status penyelesaian
-- Tidak ada teks transkrip yang disertakan dalam respons alat mana pun
-- Claude tidak dapat membaca, menganalisis, atau meneruskan konten transkrip dalam bentuk apa pun
-- Transkrip hanya ada sebagai file `.txt` lokal
-
-Ini adalah solusi yang tepat untuk penerapan medis, hukum, keuangan, dan perusahaan. Nol panggilan API, nol transmisi data, nol risiko kepatuhan.
-
-### Gerbang Persetujuan untuk Konten Transkrip
-Saat `WHISPER_PRIVACY_MODE` tidak diaktifkan (default), setiap respons alat yang menyertakan teks transkrip harus didahului oleh pengungkapan pada penggunaan pertama per sesi. Pengungkapan harus mengkomunikasikan dengan jelas bahwa teks transkrip dikirim ke API Anthropic, bahwa ini berada di luar jaminan "tidak ada data yang meninggalkan mesin", dan bahwa pengguna yang menangani konten yang diatur harus memverifikasi kewajiban kepatuhan sebelum melanjutkan.
-
-Implementasi: variabel lingkungan `WHISPER_CONSENT_ACKNOWLEDGED` yang default ke `false`. Pada pengembalian transkrip pertama per sesi, jika belum diakui, Claude menyajikan pengungkapan dan meminta konfirmasi eksplisit. Setelah diakui untuk sesi tersebut, transkrip berikutnya dikembalikan tanpa meminta ulang.
-
-### Dokumentasi `PRIVACY.md`
-Buat `PRIVACY.md` di root repo yang mencakup:
-- Data apa yang tetap lokal (selalu): file audio, video, model
-- Data apa yang mungkin meninggalkan lokal (secara default): teks transkrip dalam respons alat
-- Data apa yang tidak pernah meninggalkan lokal (dengan mode privasi): semuanya
-- Panduan kerangka kepatuhan berdasarkan industri (HIPAA, GDPR, hak istimewa pengacara-klien, FERPA, SOX, PCI-DSS, NDA/rahasia dagang)
-- Cara mengkonfigurasi mode privasi
-- Penafian bahwa penulis alat bukan penasihat hukum
-
-### Peringatan Privasi Schema Alat
-Perbarui deskripsi alat `ListToolsRequestSchema` untuk menyertakan catatan privasi pada alat apa pun yang mengembalikan teks transkrip. Ini muncul di deskripsi alat Claude Desktop dan menciptakan kesadaran pada titik penggunaan.
-
-### Pembersihan Otomatis Direktori Temp
-`%TEMP%\whisper-mcp-jobs\` mengakumulasi file status tugas dan log dari waktu ke waktu. Tambahkan pembersihan otomatis file tugas yang selesai setelah jendela retensi yang dapat dikonfigurasi (default: 7 hari). Saat ini memerlukan `Remove-Item` manual oleh pengguna.
+**Tambahan:**
+- Pembersihan otomatis direktori temp — `cleanupOldJobFiles()` berjalan saat startup, menghapus file `.json` dan `.log` yang lebih dari 7 hari dari `%TEMP%\whisper-mcp-jobs\`.
+- `check_config` kini melaporkan status mode privasi.
+- Log startup melaporkan mode privasi aktif/nonaktif.
+- Interface `Job` diperluas dengan field `privacyMode: boolean`.
+- Interface `BatchState` diperluas dengan field `privacyMode: boolean`.
+- Tipe `BackgroundFormat` mengecualikan `json` (json dalam mode latar belakang tetap tidak didukung — kembali ke `text`).
 
 ---
 
-## Direncanakan — Migrasi Bun
+## Direncanakan — v2.4.0: Migrasi Bun
 
-Migrasikan runtime dari Node.js ke [Bun](https://bun.sh) setelah arsitektur privasi selesai dan sebelum penambahan fitur v2.3.0.
+Migrasikan runtime dari Node.js ke [Bun](https://bun.sh).
 
 Karena Claude Desktop menelurkan server MCP baru setiap kali sesi dimulai, waktu startup berada di jalur kritis. Bun menjalankan TypeScript secara asli tanpa langkah kompilasi, memulai jauh lebih cepat dari Node, dan memiliki I/O yang lebih cepat.
 
@@ -167,30 +138,25 @@ Karena Claude Desktop menelurkan server MCP baru setiap kali sesi dimulai, waktu
 - Semua perilaku alat dan format output
 - Konfigurasi Claude Desktop untuk pengguna akhir
 
-**Mengapa setelah privasi, sebelum v2.3.0:** Codebase paling mudah untuk dimigrasikan sekarang. Bermigrasi setelah menambahkan lebih banyak alat hanya menambah permukaan area tanpa manfaat. Arsitektur privasi harus ada terlebih dahulu seperti yang dicatat di atas.
+---
+
+## Direncanakan — v2.5.0: Format Output Lanjutan untuk Integrasi Alat Eksternal
+
+Dukungan format output lanjutan yang ditargetkan untuk analisis downstream dan alur kerja integrasi. Cakupan tepat akan ditentukan berdasarkan umpan balik pengguna pasca-v2.3.0.
 
 ---
 
-## Lisensi
+## Direncanakan — v2.6.0: Mode Transkripsi Mikrofon Langsung
 
-whisper-windows-mcp menggunakan lisensi ganda.
+Transkripsi real-time dari input mikrofon langsung. Streaming audio dari perangkat rekaman yang dipilih ke whisper dalam potongan, mengembalikan segmen transkrip bergulir saat selesai.
 
-**Penggunaan non-komersial:** MIT — gratis untuk penggunaan pribadi, pendidikan, dan non-komersial. Lihat [LICENSE](LICENSE).
+**Batasan desain:**
+- Pemilihan perangkat harus eksplisit — tidak ada penangkapan perangkat default yang diam
+- Pengguna harus dapat menghentikan stream melalui interaksi Claude Desktop
+- Tidak boleh bertentangan dengan batasan satu-instance-whisper-setiap-saat
+- Trade-off latensi vs akurasi harus dapat dikonfigurasi pengguna
 
-**Penggunaan komersial:** Diperlukan perjanjian lisensi komersial terpisah. Lihat [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
-
-`WHISPER_PRIVACY_MODE` untuk penerapan industri yang diatur sedang dalam pengembangan dan direncanakan untuk rilis mendatang. Lihat [PRIVACY.md](PRIVACY.md) untuk panduan saat ini.
-
-## Direncanakan — v2.3.0: Perluasan Format Output
-
-### Format Subtitle VTT
-Output WebVTT (`.vtt`) bersama SRT. VTT adalah standar web yang digunakan oleh YouTube, HTML5 `<video>`, dan sebagian besar pemutar modern. whisper-cli mendukungnya secara asli. Tambahkan `vtt` sebagai format output yang valid di `transcribe_audio`, `generate_subtitles`, dan `spawnDetached`. Perbarui `buildArgs` dan semua schema alat yang relevan, README, dan dokumentasi multibahasa.
-
-### Format LRC
-Output format LRC (`.lrc`) lirik/karaoke via `-olrc`. Digunakan oleh pemutar media untuk tampilan lirik yang tersinkronisasi. Nol biaya implementasi — flag CLI asli.
-
-### Format CSV
-Output CSV (`.csv`) via `-ocsv`. Data tabular terstruktur dengan timing segmen — berguna untuk analisis downstream, alur kerja penyelarasan klip, dan impor ke alat spreadsheet. Nol biaya implementasi — flag CLI asli.
+**Status:** Fase desain. Bergantung pada API streaming yang stabil di whisper.cpp.
 
 ---
 
@@ -225,7 +191,7 @@ Untuk pengguna yang mengelola proyek pengeditan video besar dengan direktori kli
 ### Diarisasi Pembicara (pyannote-audio)
 Diarisasi pembicara mono penuh dengan label ID pembicara — menandai transisi pembicara di seluruh rekaman terlepas dari konfigurasi saluran. Berbeda dari flag `--diarize` stereo bawaan (v2.2.0) dan TinyDiarize.
 
-**Implementasi:** Memerlukan [pyannote-audio](https://github.com/pyannote/pyannote-audio) — library berbasis Python dengan persyaratan token akses model Hugging Face. Stack dependensi yang sepenuhnya terpisah dari pipeline whisper.cpp.
+**Implementasi:** Memerlukan [pyannote-audio](https://github.com/pyannote/pyannote-audio) — library berbasis Python dengan persyaratan token akses model Hugging Face. Stack dependensi yang sepenuhnya terpisah.
 
 **Status:** Fitur lanjutan opsional dengan dokumentasi pengaturannya sendiri. Tidak termasuk dalam paket utama.
 
@@ -247,24 +213,31 @@ Pipeline pasca-pemrosesan:
 
 ---
 
+## Lisensi
+
+whisper-windows-mcp menggunakan lisensi ganda.
+
+**Penggunaan non-komersial:** MIT — gratis untuk penggunaan pribadi, pendidikan, dan non-komersial. Lihat [LICENSE](LICENSE).
+
+**Penggunaan komersial:** Diperlukan perjanjian lisensi komersial terpisah untuk penggunaan bisnis, profesional, atau menghasilkan pendapatan. Lihat [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) untuk syarat dan informasi kontak.
+
+---
+
 ## Distribusi
 
-Tersedia di [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), dan [Glama](https://glama.ai).
+Tersedia di [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai), dan [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) (PR diajukan).
 
 ---
 
 ## Dokumentasi Multibahasa
 
-Dokumentasi bahasa Jepang, Korea, Vietnam, dan Indonesia dipertahankan secara paralel dengan bahasa Inggris. File-file berikut harus diperbarui agar sesuai dengan dokumen bahasa Inggris setelah setiap rilis:
+File-file berikut harus diperbarui agar sesuai dengan dokumen bahasa Inggris setelah setiap rilis:
 
-**Jepang (`*.ja.md`)**
-- `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
+**Jepang (`*.ja.md`)** — `README.ja.md` / `TROUBLESHOOTING.ja.md` / `ROADMAP.ja.md` / `PRIVACY.ja.md` / `SECURITY.ja.md`
 
-**Korea (`*.ko.md`)**
-- `README.ko.md` / `TROUBLESHOOTING.ko.md` / `ROADMAP.ko.md` / `PRIVACY.ko.md` / `SECURITY.ko.md`
+**Korea (`*.ko.md`)** — `README.ko.md` / `TROUBLESHOOTING.ko.md` / `ROADMAP.ko.md` / `PRIVACY.ko.md` / `SECURITY.ko.md`
 
-**Vietnam (`*.vi.md`)**
-- `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
+**Vietnam (`*.vi.md`)** — `README.vi.md` / `TROUBLESHOOTING.vi.md` / `ROADMAP.vi.md` / `PRIVACY.vi.md` / `SECURITY.vi.md`
 
 **Indonesia (`*.id.md`)** — `README.id.md` / `TROUBLESHOOTING.id.md` / `ROADMAP.id.md` / `PRIVACY.id.md` / `SECURITY.id.md`
 
@@ -274,9 +247,9 @@ Dokumentasi bahasa Jepang, Korea, Vietnam, dan Indonesia dipertahankan secara pa
 
 **Spanyol (`*.es.md`)** — `README.es.md` / `TROUBLESHOOTING.es.md` / `ROADMAP.es.md` / `PRIVACY.es.md` / `SECURITY.es.md`
 
-**Polish (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
+**Polandia (`*.pl.md`)** — `README.pl.md` / `TROUBLESHOOTING.pl.md` / `ROADMAP.pl.md` / `PRIVACY.pl.md` / `SECURITY.pl.md`
 
-**Romanian (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
+**Rumania (`*.ro.md`)** — `README.ro.md` / `TROUBLESHOOTING.ro.md` / `ROADMAP.ro.md` / `PRIVACY.ro.md` / `SECURITY.ro.md`
 
 Kontribusi komunitas untuk bahasa lain disambut.
 

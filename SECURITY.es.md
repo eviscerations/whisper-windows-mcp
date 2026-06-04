@@ -13,11 +13,25 @@ whisper-windows-mcp es una herramienta que prioriza lo local. Todo el procesamie
 
 **Los archivos de audio nunca salen de tu máquina.** Esta garantía es incondicional.
 
-**El texto de transcripción puede salir de tu máquina.** Cuando una respuesta de herramienta incluye texto de transcripción, ese texto es procesado por la API de Claude. Este es el comportamiento estándar de MCP, pero crea una brecha entre la filosofía de diseño "prioridad local" de la herramienta y el flujo de datos real para usuarios que manejan contenido regulado o confidencial.
+**El texto de transcripción puede salir de tu máquina en modo estándar.** Cuando una respuesta de herramienta incluye texto de transcripción, ese texto es procesado por la API de Claude. Este es el comportamiento estándar de MCP, pero crea una brecha entre la filosofía de diseño "prioridad local" de la herramienta y el flujo de datos real para usuarios que manejan contenido regulado o confidencial.
 
-Una variable de entorno `WHISPER_PRIVACY_MODE` está planificada y restringirá todas las respuestas de herramientas solo a metadatos — ningún texto de transcripción devuelto a la API de Claude. Esta es la solución prevista para implementaciones médicas, jurídicas, financieras y corporativas.
+**El modo de privacidad** (`WHISPER_PRIVACY_MODE=true` o `privacy_mode=true` por llamada) restringe todas las respuestas de herramientas solo a metadatos — ningún texto de transcripción devuelto a la API de Claude. Esta es la configuración correcta para implementaciones médicas, jurídicas, financieras y corporativas.
+
+**Puerta de modo de privacidad:** Cuando el modo de privacidad está activo, se muestra una divulgación de confirmación explícita antes de cada operación de transcripción. Esto es intencional y no puede omitirse — el cumplimiento normativo requiere consentimiento informado por operación.
+
+**Puerta de consentimiento:** En modo estándar, se muestra una divulgación única por sesión antes de que el texto de transcripción sea devuelto a la API por primera vez en una sesión. Establece `WHISPER_CONSENT_ACKNOWLEDGED=true` en tu configuración para omitir esto en contenido no sensible.
 
 Ver [PRIVACY.md](PRIVACY.md) para la descripción completa de la arquitectura de privacidad, orientación de marcos de cumplimiento (HIPAA, GDPR, privilegio abogado-cliente, FERPA, SOX, PCI-DSS) e instrucciones de configuración.
+
+## Verificación del binario
+
+Para verificar la integridad del binario `whisper-cli.exe` en el release precompilado, comprueba su hash SHA256 en PowerShell:
+
+```powershell
+Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
+```
+
+El hash esperado para cada binario de release está publicado en la [página de releases](https://github.com/eviscerations/whisper-windows-mcp/releases). No uses un binario cuyo hash no coincida.
 
 ## Versiones soportadas
 
@@ -43,5 +57,8 @@ Recibirás una respuesta en 7 días. Si la vulnerabilidad es confirmada, se lanz
 
 - **Inyección de ruta de archivo:** Las herramientas aceptan rutas de archivo absolutas de Claude. Esto es por diseño — la herramienta está destinada a ser usada con Claude Desktop por el propietario de la máquina. No expongas este servidor MCP a acceso de red no confiable.
 - **Sin sandbox:** whisper-cli.exe se ejecuta con los mismos permisos que Claude Desktop. Esto es estándar para herramientas MCP locales.
-- **Archivos temporales:** Los archivos WAV intermedios se escriben en `%TEMP%\whisper_tmp_*.wav` y se eliminan tras la transcripción. Los archivos de estado de tareas se escriben en `%TEMP%\whisper-mcp-jobs\` y persisten hasta ser limpiados manualmente o hasta que la función de limpieza automática planificada esté disponible.
-- **Contenido de transcripción:** El texto de transcripción devuelto en respuestas de herramientas es procesado por la API de Claude. Esto está documentado y podrá ser abordado via `WHISPER_PRIVACY_MODE` en un release futuro. Ver [PRIVACY.md](PRIVACY.md).
+- **Archivos temporales:** Los archivos WAV intermedios se escriben en `%TEMP%\whisper_tmp_*.wav` y se eliminan tras la transcripción. Los archivos de estado de tareas se escriben en `%TEMP%\whisper-mcp-jobs\` y se limpian automáticamente después de 7 días al iniciar el servidor.
+- **Contenido de transcripción:** El texto de transcripción devuelto en respuestas de herramientas es procesado por la API de Claude en modo estándar. Para evitar esto, activa `WHISPER_PRIVACY_MODE=true` o pasa `privacy_mode=true` por llamada. Ver [PRIVACY.md](PRIVACY.md).
+- **Inyección de transcripción:** Los archivos de audio pueden contener contenido hablado que, cuando se transcribe, se asemeja a instrucciones. Las defensas integradas de Claude manejan esto. El propio servidor MCP marca todo el contenido de transcripción como datos no confiables y nunca lo interpreta como instrucciones.
+- **Las descargas de modelos están restringidas:** La herramienta `download_model` solo descarga desde dos espacios de nombres de Hugging Face de confianza (`ggerganov/whisper.cpp` y `ggml-org`). Los redireccionamientos son validados contra una lista de permitidos antes de seguirlos. Las URLs arbitrarias son rechazadas a nivel de código.
+- **El cambio de modelos está en sandbox:** `switch_model` solo acepta archivos `.bin` dentro del directorio de modelos configurado. Las rutas fuera de ese directorio son rechazadas independientemente de cómo se especifiquen.

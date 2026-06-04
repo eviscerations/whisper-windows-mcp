@@ -15,280 +15,312 @@
 
 ---
 
-## "whisper nu este conectat" sau niciun instrument disponibil
+## Instalare și pornire
 
-**Cauza cea mai frecventă:** Claude Desktop nu a fost repornit complet după editarea configurației.
+### Whisper nu apare în Claude Desktop → Setări → Dezvoltator
 
-1. Fă clic dreapta pe pictograma Claude din bara de sistem → Ieși
-2. Redeschide Claude Desktop
-3. Mergi la Setări → Dezvoltator și verifică insigna verde **în execuție** de lângă whisper
+1. Deschide Claude Desktop → Setări → Dezvoltator → Editează configurația
+2. Verifică dacă JSON-ul este valid — lipește-l pe [jsonlint.com](https://jsonlint.com) dacă ai îndoieli
+3. Asigură-te că `WHISPER_CLI_PATH` și `WHISPER_MODEL` indică fișiere care există efectiv
+4. Ieși din Claude Desktop din bara de sistem (fă clic dreapta pe pictogramă → Ieși)
+5. Repornește Claude Desktop și verifică din nou
 
-Dacă tot nu apare:
+Dacă whisper apare dar afișează o insignă de eroare în loc de verde:
+- Întreabă Claude: *"Verifică configurația whisper"* — instrumentul `check_config` returnează un mesaj de eroare specific
+- Verifică Claude Desktop → Setări → Dezvoltator → fă clic pe numele serverului pentru jurnalul de erori
 
-1. Deschide `claude_desktop_config.json` și verifică erorile de sintaxă JSON (virgule lipsă, acolade nepotrivite)
-2. Asigură-te că toate căile folosesc bare oblice inverse duble
-3. Rulează `check_config` în Claude Desktop pentru a obține o diagnosticare
+### Eroarea "whisper-cli.exe nu a fost găsit"
 
----
+Calea din `WHISPER_CLI_PATH` nu corespunde locului unde a fost extras binarul.
 
-## download_model atinge limita de timp pentru modele mari
-
-Claude Desktop are o limită de timp de 4 minute pentru apelurile instrumentelor MCP. Descărcările de modele mari pe conexiuni lente pot depăși acest lucru.
-
-**Dimensiunile fișierelor:**
-- `large-v3` — 2,9 GB
-- `large-v3-turbo` — 1,6 GB
-- `large-v3-q5_0` — 1,1 GB
-- `large-v3-turbo-q5_0` — 547 MB
-- `medium.en` — 1,5 GB
-- `medium.en-q5_0` — 514 MB
-
-Pe o conexiune rapidă (100 Mbps+), chiar și large-v3 se descarcă în mai puțin de 4 minute. Pe conexiuni mai lente, folosește un browser sau PowerShell pentru a descărca direct și plasează fișierul în directorul de modele manual:
-
-```powershell
-# Exemplu — descărcare directă large-v3-turbo
-Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" `
-  -OutFile "C:\whisper\models\ggml-large-v3-turbo.bin"
-```
-
-Apoi folosește `switch_model ggml-large-v3-turbo.bin` pentru activare.
-
----
-
-## `check_config` raportează că whisper-cli.exe nu a fost găsit
-
-Calea din configurația ta nu corespunde locației reale a fișierului.
+Calea implicită așteptată: `C:\whisper\Release\whisper-cli.exe`
 
 Verifică dacă fișierul există:
-```
-dir C:\whisper\Release\whisper-cli.exe
+```powershell
+Test-Path "C:\whisper\Release\whisper-cli.exe"
 ```
 
-Dacă este altundeva, actualizează `WHISPER_CLI_PATH` în configurația ta pentru a corespunde căii reale.
+Ar trebui să returneze `True`. Dacă returnează `False`, fie extrage zip-ul versiunii în `C:\whisper\Release\`, fie actualizează `WHISPER_CLI_PATH` în configurație pentru a corespunde locației reale.
+
+### Eroarea "Model negăsit"
+
+Calea din `WHISPER_MODEL` nu corespunde locației reale sau numelui fișierului model.
+
+Verifică directorul de modele:
+```powershell
+Get-ChildItem "C:\whisper\models\"
+```
+
+Numele fișierului trebuie să includă numele complet cu sufixul de cuantizare, ex. `ggml-large-v3-turbo-q5_0.bin`, nu `ggml-large-v3-turbo.bin`. Dacă nu sunt instalate modele, folosește `download_model` în Claude Desktop.
 
 ---
 
-## `check_config` raportează că FFmpeg nu a fost găsit
+## Accelerare GPU
 
-FFmpeg nu este instalat sau nu este în PATH-ul sistemului.
+### Transcrierea este lentă — doar CPU, fără GPU
 
-Instalare via winget:
+Întreabă Claude: *"Verifică hardware-ul sistemului"*
+
+Instrumentul `check_system` confirmă dacă `ggml-vulkan.dll` este prezent în directorul binarelor whisper. Dacă DLL-ul lipsește, rulezi doar pe CPU indiferent de GPU-ul tău.
+
+**Soluție:** Descarcă `whisper-vulkan-win-x64.zip` de pe [pagina de versiuni](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0) și extrage în `C:\whisper\Release\`. Zip-ul conține DLL-ul — trebuie să fie în același director cu `whisper-cli.exe`.
+
+### GPU detectat, dar utilizare 0% în timpul transcrierii
+
+Binarul rulează, dar nu trimite sarcini la GPU. De obicei înseamnă:
+- Vulkan SDK nu este instalat sau driverul GPU nu expune o interfață Vulkan
+- GPU-ul este mai vechi decât Vulkan 1.0 (rar — majoritatea GPU-urilor din 2016+ îl suportă)
+
+Verifică suportul Vulkan:
+```powershell
+vulkaninfo
 ```
-winget install ffmpeg
+
+Orice ieșire confirmă disponibilitatea Vulkan. Dacă `vulkaninfo` nu funcționează, instalează cel mai recent driver GPU de pe site-ul producătorului.
+
+### VRAM raportat ca jumătate din dimensiunea reală (AMD)
+
+Aceasta este o nuanță de raportare Windows pentru GPU-uri AMD. VRAM-ul real disponibil pentru procesare este de obicei de două ori mai mare decât ceea ce raportează `wmic`. Recomandarea modelului poate fi excesiv de conservatoare — poți încerca un model mai mare decât cel recomandat.
+
+---
+
+## Calitatea transcrierii
+
+### Ieșirea conține text halucinat sau fraze repetate
+
+Whisper uneori halucinează pe segmente audio silențioase sau de calitate scăzută. Instrumentul aplică implicit `--max-context 0` și `--no-speech-thold 0.6` pentru a minimiza aceasta.
+
+Abordări suplimentare:
+- Folosește `temperature=0.2` — o mică aleatoritate ajută la spargerea buclelor de halucinație pe audio zgomotos
+- Folosește un model VAD: descarcă un fișier `.bin` al modelului Silero VAD și transmite calea sa ca `vad_model`. Elimină tăcerea înainte de transcriere — cea mai eficientă remediere pentru halucinații pe înregistrări cu pauze.
+- Folosește un model mai mare (`large-v3` sau `large-v3-turbo`) — modelele mai mici halucinează mai mult pe audio dificil
+- Folosește `prompt` pentru a seta contextul: *"Aceasta este un interviu podcast despre inginerie software."*
+
+### Ieșirea transcrierii este goală sau foarte scurtă
+
+Întreabă Claude: *"Analizează acest fișier"* (`analyze_media`) pentru a confirma că fișierul are conținut audio și este un format recunoscut.
+
+Dacă FFprobe raportează audio dar transcrierea nu produce nimic:
+- Fișierul poate fi într-o limbă care nu corespunde parametrului `language` configurat
+- Încearcă `language=auto` pentru ca Whisper să detecteze limba
+- Audio-ul poate fi prea silențios sau puternic procesat — transcrierea necesită vorbire inteligibilă
+
+---
+
+## Modul de confidențialitate și poarta de consimțământ
+
+### Nu văd un prompt de consimțământ înainte de transcriere
+
+Poarta de consimțământ se activează **o dată per sesiune** în modul standard. Dacă ai confirmat deja o transcriere în această sesiune (de la ultima repornire Claude Desktop), nu se va activa din nou.
+
+Alte motive pentru care poarta poate să nu apară:
+- `WHISPER_CONSENT_ACKNOWLEDGED=true` este setat în configurația ta — suprimă complet poarta
+- `WHISPER_PRIVACY_MODE=true` este setat — modul de confidențialitate folosește propria sa poartă separată per operațiune
+- Verifici progresul unei transcrieri de blocare care s-a terminat deja — poarta a fost consumată la începutul sarcinii
+
+**Pentru a reseta și a vedea din nou poarta:** repornește complet Claude Desktop (ieși din bara de sistem, repornește).
+
+### Claude procesează fișierul meu fără a întreba
+
+Dacă `WHISPER_CONSENT_ACKNOWLEDGED=true` este în configurația ta, poarta este suprimată intenționat. Acesta este comportamentul intenționat pentru utilizatorii care au revizuit implicațiile de confidențialitate.
+
+Dacă nu este setat și Claude a continuat fără a întreba, poarta sesiunii a fost deja consumată de o transcriere anterioară în aceeași sesiune. Poarta se activează o dată per sesiune.
+
+### Modul de confidențialitate este activ, dar vreau să citesc o transcriere
+
+Transmite `privacy_mode=false` direct instrumentului de transcriere pentru acel apel specific. Suprascrie setarea globală `WHISPER_PRIVACY_MODE=true` doar pentru acel singur apel:
+
+- *"Transcrie acest fișier, privacy_mode=false"*
+
+Nu este necesară repornirea. Suprascrierea se aplică doar acelui singur apel de instrument.
+
+### Modul de confidențialitate solicită confirmare înainte de fiecare fișier
+
+Acesta este comportamentul corect și intenționat. Modul de confidențialitate necesită consimțământ per operațiune — poarta se activează înainte de fiecare transcriere și nu poate fi ocolită când modul de confidențialitate este activ.
+
+### Sarcini în fundal și poarta de consimțământ
+
+Pentru transcrierea în fundal (`background=true`) în modul standard, poarta de consimțământ se activează la finalizarea `check_progress`, nu la apelul `transcribe_audio`. La momentul apelului, textul de transcriere nu există încă. Poarta se activează în momentul în care textul de transcriere ar fi returnat pentru prima dată la API.
+
+Pentru sarcinile în fundal în modul de confidențialitate, poarta se activează **înainte de pornire** — înainte de orice procesare audio.
+
+### Cum suprim permanent poarta de consimțământ?
+
+Setează `WHISPER_CONSENT_ACKNOWLEDGED=true` în secțiunea env a fișierului `claude_desktop_config.json`. Aceasta suprimă dezvăluirea unică per sesiune în modul standard.
+
+Notă: nu are efect când modul de confidențialitate este activ.
+
+---
+
+## Transcriere în fundal și lot
+
+### Sarcina în fundal nu apare niciodată ca finalizată
+
+Starea sarcinii este urmărită prin ieșirea procesului whisper-cli.exe. Verifică:
+
+1. Întreabă Claude: *"Verifică progresul job_id"* — dacă procesul încă rulează, instrumentul returnează "În progres" cu timpul scurs și ultimul marcaj de timp al segmentului
+2. Dacă fișierul este foarte lung (2+ ore), oferă mai mult timp — transcrierea GPU a unui fișier de 2 ore durează aproximativ 15–20 de minute pe un GPU mediu
+3. Dacă timpul scurs pare greșit, deschide Task Manager → Detalii și verifică dacă `whisper-cli.exe` este listat
+
+### Sarcina în fundal finalizată, dar lipsește fișierul de ieșire sau este în locul greșit
+
+Sarcinile în fundal scriu ieșirea la o cale temporară în `%TEMP%\whisper-mcp-jobs\` în timpul procesării, apoi mută fișierul în directorul sursă la finalizare. Dacă mutarea eșuează, `check_progress` returnează o eroare specifică.
+
+Verifică:
+- Directorul sursă există și este scriibil
+- Există suficient spațiu pe disc
+- Calea țintă nu este prea lungă (Windows are implicit o limită de cale de 260 de caractere)
+
+### Lotul s-a blocat sau nu trece la fișierul următor
+
+`start_batch` folosește un callback de ieșire pentru a avansa automat fără interogare. Dacă lotul pare blocat:
+
+1. Apelează `check_batch_progress` — forțează verificarea progresului și reevaluează starea curentă
+2. Dacă fișierul curent încă rulează, lasă-l să se termine — verifică Task Manager pentru `whisper-cli.exe`
+3. Dacă `check_batch_progress` arată fișierul curent ca eșuat, va încerca să treacă la fișierul următor
+
+### Lotul raportează fișierul ca "eșuat" deși pare finalizat
+
+Validatorul verifică că fișierul de ieșire nu este gol și are cel puțin un rând la fiecare 30 de secunde de audio. Fișierele scurte sau înregistrările cu secțiuni lungi silențioase pot produce ieșiri pe care validatorul le consideră suspect de scurte.
+
+Dacă transcrierea pare corectă la deschidere — rulează-o din nou prin `transcribe_audio` individual și verifică rezultatul manual.
+
+---
+
+## Generarea subtitrărilor
+
+### Fișierul SRT salvat, dar cu nume greșit sau în locul greșit
+
+Fișierele SRT și VTT sunt salvate lângă fișierul sursă cu codul de limbă adăugat când limba sursă nu este engleza:
+- Sursă engleză: `numefisier.srt`
+- Sursă română: `numefisier.ro.srt`
+- Cu traducere în engleză: `numefisier.ro.srt` + `numefisier.en.srt`
+
+### Ieșire VTT pentru web — cum încarc în player desktop?
+
+VLC suportă VTT prin Subtitrări → Adaugă fișier de subtitrări → selectează fișierul `.vtt`. Majoritatea celorlalte playere desktop suportă mai bine SRT decât VTT. Folosește `output_format=srt` pentru compatibilitate maximă cu playerele desktop.
+
+VTT este cel mai bun pentru elemente HTML5 `<video>` și playere video web.
+
+### Fișierele LRC nu se afișează în player
+
+Fișierele LRC (`.lrc`) sunt destinate playerelor cu funcții de afișare versuri/karaoke: foobar2000, Winamp, AIMP și diverse playere mobile. Playerele video standard nu afișează LRC. Dacă ai nevoie de subtitrări sincronizate pentru video, folosește `srt` sau `vtt`.
+
+### Generarea subtitrărilor atinge limita de timp cu eroare de 4 minute
+
+`generate_subtitles` rulează implicit sincron și poate atinge limita de timp MCP de 4 minute a Claude Desktop pe fișiere lungi. Folosește `background=true` pentru fișiere de peste 10 minute:
+
+- *"Generează subtitrări pentru acest fișier, background=true"*
+
+Apoi monitorizează progresul prin `check_progress`. Notă: `translate_to_english=true` nu este disponibil în modul fundal. Rulează o a doua trecere după finalizarea sarcinii în fundal pentru a genera traducerea.
+
+---
+
+## Gestionarea modelelor
+
+### `download_model` eșuează cu eroare de rețea
+
+Instrumentul descarcă de la Hugging Face. Asigură-te că calculatorul tău are acces la internet și că `huggingface.co` nu este blocat de firewall sau proxy.
+
+Dacă descărcarea începe dar nu se termină, fișierul `.part` este șters automat. Rulează din nou `download_model` pentru a reîncerca.
+
+### `switch_model` spune că modelul nu este în directorul de modele
+
+Instrumentul `switch_model` acceptă doar fișiere în directorul configurat în `WHISPER_MODEL` (mai exact, directorul care conține acel fișier).
+
+Dacă modelul tău este într-o altă locație, fie mută-l în directorul de modele, fie actualizează `WHISPER_MODEL` în configurație pentru a indica un fișier din același director cu modelele tale.
+
+### Modelul activ revine la modelul din configurație după repornirea Claude Desktop
+
+`switch_model` este cu domeniu de sesiune prin design. Pentru a face schimbarea modelului permanentă, actualizează `WHISPER_MODEL` în `claude_desktop_config.json` și repornește Claude Desktop.
+
+---
+
+## Căi de fișiere și formate
+
+### Numele de fișiere Unicode cauzează eșecuri silențioase ale transcrierii
+
+Transcrierea în fundal direcționează toată ieșirea printr-o cale temporară igienizată ASCII bazată pe ID sarcină, care gestionează corect numele de fișiere Unicode. Dacă vezi un eșec cu un nume de fișier Unicode în modul de blocare, verifică dacă fișierul este accesibil:
+
+```powershell
+Test-Path "C:\Users\NumeUtilizator\Documents\inregistrare_romana.mp4"
 ```
 
-Sau descarcă de la [ffmpeg.org](https://ffmpeg.org/download.html), extrage și adaugă folderul `bin` la PATH-ul sistemului.
+Ar trebui să returneze `True`. Dacă calea este inaccesibilă pentru PowerShell, va fi inaccesibilă și pentru serverul MCP.
 
-După instalare, deschide o nouă linie de comandă și verifică:
+### Fișierul video nu produce ieșire sau eroare imediată
+
+FFmpeg este necesar pentru toate formatele video. Verifică dacă FFmpeg este instalat:
 ```
 ffmpeg -version
 ```
 
-Dacă ai instalat FFmpeg într-o locație non-standard, setează variabila de mediu `FFMPEG_PATH` în configurația Claude Desktop:
-```json
-"env": {
-  "FFMPEG_PATH": "C:\\ffmpeg\\bin\\ffmpeg.exe"
-}
+Dacă FFmpeg nu este în PATH, setează `FFMPEG_PATH` în configurație la calea completă a `ffmpeg.exe`.
+
+Dacă FFmpeg este instalat dar un anumit video eșuează, poate fi un fișier corupt sau un variant de codec neobișnuit. Încearcă să convertești manual:
 ```
-
----
-
-## Ieșirea transcrierii este plină de etichete `[FOREIGN]`
-
-**Cauza:** Folosești un model numai engleză (ex.: `ggml-medium.en.bin`) pe audio în altă limbă decât engleza. Modelele numai engleză nu pot procesa alte limbi și generează `[FOREIGN]` ca substituent pentru fiecare segment pe care nu îl pot gestiona.
-
-**Soluție:** Descarcă și folosește `ggml-large-v3.bin` — modelul multilingv. Acesta este necesar pentru orice transcriere non-engleză, detectarea automată a limbii sau traducere.
-
-```
-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
-```
-
-Salvează în `C:\whisper\models\` și actualizează configurația:
-```json
-"WHISPER_MODEL": "C:\\whisper\\models\\ggml-large-v3.bin"
-```
-
-Sau suprascrie per-transcriere folosind parametrul `model` în `transcribe_audio` sau `generate_subtitles`.
-
-> **Notă:** Modelele numai engleză (`*.en.bin`) sunt mai rapide și mai precise pentru conținut în engleză, dar sunt complet incapabile să gestioneze alte limbi. Dacă lucrezi cu conținut multilingv, `large-v3` este modelul corect indiferent de hardware.
-
----
-
-## Transcrierea nu produce ieșire sau fișier gol
-
-**Cauze posibile:**
-
-1. **Model greșit pentru limbă** — Modelele numai engleză (`*.en.bin`) nu pot transcriere alte limbi. Folosește `ggml-large-v3.bin` pentru conținut multilingv.
-
-2. **Calitate audio prea scăzută** — Fișierele cu rată de biți foarte mică (ex.: înregistrări vechi de telefon `.3gp` folosind codec AMR-NB ~12kbps) pot fi la limita a ceea ce whisper poate procesa. Mediile zgomotoase (zgomot de fundal, ecou, vorbitori depărtați) sunt de asemenea dificile. Încearcă `large-v3` care gestionează mai bine audio degradat.
-
-3. **Fișier silențios sau corupt** — Rulează `analyze_media` pe fișier pentru a verifica dacă FFprobe detectează un flux audio valid.
-
-4. **Eșec de conversie** — Fișierul poate să nu se convertească corect la WAV. Încearcă să convertești manual mai întâi:
-```
-ffmpeg -i yourfile.3gp -ar 16000 -ac 1 output.wav
+ffmpeg -i input.mp4 -ar 16000 -ac 1 output.wav
 ```
 Apoi transcrie WAV-ul direct.
 
----
+### Eroarea "Fișier prea mare"
 
-## Sarcina în fundal eșuează pe fișiere cu caractere speciale sau Unicode în nume
+Instrumentul respinge fișierele peste 10 GB. Aceasta este o limită de securitate pentru a preveni epuizarea resurselor. Fișierele care se apropie de această dimensiune trebuie împărțite înainte de transcriere.
 
-**Cauza:** whisper-cli.exe nu poate scrie fișierul de ieșire când calea conține caractere Unicode (română, japoneză, chineză, emoji, paranteze etc.) sau anumite caractere speciale.
+### Respingere cale UNC
 
-**Soluție temporară curentă:** Redenumește fișierul pentru a folosi doar caractere ASCII înainte de transcriere, apoi redenumește înapoi dacă este necesar.
-
-```
-ren "fisier_romanesc.mp4" "temp_transcribe.mp4"
-```
-
-**Status:** Acesta este un bug cunoscut. O corecție este planificată care va direcționa ieșirea printr-o cale temporară igienizată și va muta rezultatul la destinația corectă după finalizare.
+Căile care încep cu `\\server\share` (căi UNC la partajări de rețea) sunt respinse de validatorul de intrări. Montează partajarea de rețea ca literă de unitate (ex. `Z:\`) și folosește acea cale.
 
 ---
 
-## Sarcina în fundal arată "eșuat" fără ieșire
+## Curățarea fișierelor temporare
 
-**Cauze posibile:**
-
-1. **Nume de fișier Unicode** — Vezi mai sus.
-
-2. **Cale model greșită** — Procesul detașat nu moștenește căile corectate. Rulează `check_config` pentru a verifica căile.
-
-3. **Procesul a fost terminat** — Dacă whisper-cli.exe a fost terminat manual în mijlocul unei sarcini, nu va exista niciun fișier de ieșire. Încearcă din nou.
-
-4. **VRAM insuficient** — Modelele mari pe GPU-uri cu VRAM redus pot eșua silențios. Încearcă un model mai mic.
-
-5. **Eșec de conversie a fișierului** — Încearcă să transcrii direct un fișier WAV pentru a izola dacă problema este la conversie sau transcriere.
-
----
-
-## Transcrierea în fundal nu produce ieșire SRT
-
-**Cauza:** Modul în fundal (`background=true` în `transcribe_audio`) produce în prezent doar ieșire `.txt`. Formatul SRT în modul fundal nu a fost încă implementat.
-
-**Soluție temporară:** Pentru fișiere sub ~4 minute, folosește `generate_subtitles` în modul de blocare. Pentru fișiere mai lungi, transcrie mai întâi în modul fundal pentru a obține `.txt`, apoi dacă este nevoie de SRT, folosește `generate_subtitles` pe același fișier (va transcriere din nou).
-
-**Status:** Suportul SRT în modul fundal este planificat pentru o versiune viitoare.
-
----
-
-## GPU-ul nu este folosit (CPU blocat peste 50%)
-
-**Cauza:** Rulezi binarul numai CPU care vine cu versiunea standard whisper.cpp.
-
-**Soluție:** Descarcă compilarea cu Vulkan activat de pe [pagina de versiuni](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0) și extrage în `C:\whisper\Release\`.
-
-Verifică că accelerarea GPU este activă:
-- Cere lui Claude să ruleze `check_system`
-- Caută `✅ Vulkan binary: ggml-vulkan.dll found` în ieșire
-- Urmărește Task Manager → Performanță → GPU în timpul unei transcrieri — utilizarea GPU ar trebui să urce la 15–30%
-
----
-
-## `check_system` raportează cantitatea greșită de VRAM
-
-Aceasta este o limitare cunoscută Windows. Comanda `wmic` citește VRAM din registry, care pe multe plăci AMD raportează jumătate din VRAM-ul fizic. Un Vega 56 cu 8GB HBM2 va arăta de obicei 4GB. Aceasta este doar o problemă de afișare — whisper folosește tot VRAM-ul fizic în timpul inferenței.
-
----
-
-## Eroarea "Transcrierea este deja în curs"
-
-Un proces `whisper-cli.exe` rulează dintr-o sarcină anterioară. Așteaptă să se termine, sau:
-
-1. Deschide Task Manager → fila Detalii
-2. Găsește `whisper-cli.exe`
-3. Fă clic dreapta → Încheie sarcina
-
-Apoi încearcă din nou.
-
----
-
-## Detectarea automată a limbii este greșită
-
-Detectarea automată a Whisper rulează pe primele 30 de secunde de audio. Dacă fișierul începe într-o limbă diferită față de cea mai mare parte a conținutului său, detectarea poate fi greșită.
-
-**Soluție:** Specifică limba explicit (ex.: `language=ro`) în loc să te bazezi pe detectarea automată.
-
----
-
-## Generarea subtitrărilor produce "(vorbind în limbă străină)" pe tot videoclipul
-
-Whisper a detectat vorbire, dar nu a putut transcriere. Cele mai frecvente cauze:
-
-1. **Model greșit** — Folosind un model numai engleză pe audio non-englezesc. Folosește `large-v3`.
-
-2. **Calitate audio** — Mediile zgomotoase (bucătării, mulțimi, ecou) pot depăși modelul medium. Încearcă `large-v3`.
-
-3. **Limbă mixtă** — Fișierele cu două limbi alternante vor avea limba minoritară înlocuită cu substituenți cu setare de limbă unică.
-
----
-
-## Traducerea subtitrărilor produce doar engleză
-
-Acesta este comportamentul intenționat. Indicatorul `--translate` integrat al Whisper traduce doar **în engleză**. Pentru traducere în alte limbi țintă, procesează conținutul fișierului `.srt` separat.
-
----
-
-## Transcrierea în lot a încetat să avanseze
-
-Apelează din nou `check_batch_progress`. Dacă tot este blocată:
-
-1. Verifică Task Manager pentru un proces `whisper-cli.exe` care rulează
-2. Verifică jurnalele sarcinilor în `%TEMP%\whisper-mcp-jobs\`
-3. Fișierele cu erori sunt marcate în raportul lotului — rulează-le individual cu `transcribe_audio`
-
----
-
-## Curățarea directorului temporar de sarcini
-
-whisper-windows-mcp scrie fișiere de stare a sarcinilor și jurnale în `%TEMP%\whisper-mcp-jobs\` în timpul transcrierii. Acestea se acumulează în timp și pot consuma spațiu pe disc, în special fișierele `.log` din sarcinile lungi de transcriere.
-
-Odată ce un lot sau o sarcină este finalizată și ai verificat transcrierile de ieșire, poți șterge în siguranță totul din acest director:
+Fișierele de stare a sarcinilor (`.json` și `.log`) din `%TEMP%\whisper-mcp-jobs\` sunt curățate automat la pornire pentru fișierele mai vechi de 7 zile. Curățarea manuală rămâne posibilă dacă este necesar:
 
 ```powershell
-Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Recurse -Force
+Remove-Item "$env:TEMP\whisper-mcp-jobs\*" -Force
 ```
 
-Directorul va fi recreat automat la următoarea transcriere. Niciun fișier de ieșire a transcrierii nu este stocat permanent aici — sunt mutate în directorul sursă la finalizare. Rămân doar metadate ale sarcinilor și jurnale.
+Fișierele WAV temporare de conversie (`whisper_tmp_*.wav` în `%TEMP%`) sunt șterse imediat după fiecare transcriere. Dacă o transcriere a căzut la mijloc, pot rămâne. Șterge-le manual:
 
-**Notă:** Nu șterge acest director în timp ce o transcriere este în curs — fișierele de stare a lotului sunt necesare pentru funcționarea `check_batch_progress`.
+```powershell
+Remove-Item "$env:TEMP\whisper_tmp_*.wav" -Force
+```
 
 ---
 
 ## Lot mare nesupravegheit din linia de comandă
 
-Pentru loturi foarte mari în care vrei să rulezi peste noapte fără Claude, folosește PowerShell.
+Pentru loturi foarte mari fără Claude, folosește direct PowerShell.
 
-**Important:** whisper-cli.exe nu poate citi direct MP4, MKV sau majoritatea formatelor video. FFmpeg trebuie să preconvertească fiecare fișier la WAV mai întâi. Whisper scrie de asemenea transcrierea la stdout și ieșirea de diagnosticare la stderr — folosește `Start-Process -RedirectStandardOutput` pentru a capta corect transcrierea. Folosirea pipe `|` sau redirecționarea stderr cu `2>$null` nu capturează nimic.
+**Important:** whisper-cli.exe nu poate citi direct MP4, MKV sau majoritatea formatelor video. FFmpeg trebuie să preconvertească fiecare fișier la WAV mai întâi. Whisper scrie transcrierea la stdout și diagnosticele la stderr — folosește `Start-Process -RedirectStandardOutput` pentru a capta corect.
 
 ```powershell
 $whisper = "C:\whisper\Release\whisper-cli.exe"
 $model   = "C:\whisper\models\ggml-medium.en.bin"
-$dir     = "C:\path\to\your\folder"
+$dir     = "C:\calea\catre\folderul\tau"
 $ffmpeg  = "ffmpeg"
 $tmp     = "$env:TEMP\whisper_convert.wav"
 
 Get-ChildItem "$dir\*.mp4" | ForEach-Object {
     $out = ($_.FullName -replace '\.mp4$', '') + ".txt"
     if (Test-Path $out) {
-        Write-Host "SKIP (exists): $($_.Name)"
+        Write-Host "SARI (există): $($_.Name)"
         return
     }
-    Write-Host "Converting:    $($_.Name)"
+    Write-Host "Conversie:    $($_.Name)"
     & $ffmpeg -y -i $_.FullName -ar 16000 -ac 1 -c:a pcm_s16le $tmp 2>$null
-    Write-Host "Transcribing:  $($_.Name)"
-    $wArgs = "-m `"$model`" -f `"$tmp`" --threads 8 --condition-on-previous-text 0 --no-speech-thold 0.6"
+    Write-Host "Transcriere:  $($_.Name)"
+    $wArgs = "-m `"$model`" -f `"$tmp`" --threads 8 --max-context 0 --no-speech-thold 0.6"
     Start-Process -FilePath $whisper -ArgumentList $wArgs -RedirectStandardOutput $out -Wait -NoNewWindow
-    Write-Host "Done:          $($_.BaseName).txt"
+    Write-Host "Gata:         $($_.BaseName).txt"
 }
 
 Remove-Item $tmp -ErrorAction SilentlyContinue
-Write-Host "All done."
+Write-Host "Totul gata."
 ```
 
 Schimbă `*.mp4` cu `*.mkv`, `*.m4a` etc. pentru a corespunde tipurilor tale de fișiere. Verificarea de sărire `Test-Path` înseamnă că rularea din nou a scriptului după o întrerupere nu va reprocesa fișierele deja finalizate.
-
-Aceasta scrie fișiere `.txt` lângă fiecare sursă. Instrumentele MCP le vor recunoaște ca deja transcrise când rulezi ulterior `analyze_media` sau `start_batch`.
 
 ---
 
