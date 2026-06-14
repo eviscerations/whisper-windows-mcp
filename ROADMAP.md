@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Roadmap
 
-Current version: **v2.3.0**
+Current version: **v2.4.0**
 
 ---
 
@@ -118,9 +118,33 @@ Detached process architecture: `transcribe_audio` with `background=true` spawns 
 - `BatchState` interface extended with `privacyMode: boolean` field.
 - `BackgroundFormat` type excludes `json` (json in background mode remains unsupported — falls back to `text`).
 
+### ✅ v2.4.0 — Hardening, Foreground Guard, Test Suite & CI
+
+A security/robustness pass; the planned Bun migration moved to v2.5.0.
+
+**Security & correctness:**
+- `switch_model` path-containment fix — a sibling-prefix directory (e.g. `…\models-evil`) could previously satisfy the "inside the models directory" check via a naive `startsWith`; replaced with normalized, `relative()`-based containment. Closes the escape SECURITY.md describes.
+- Privacy/consent gate keyed **per operation** (tool + arguments) — confirming one transcription can no longer satisfy a different operation's gate.
+- `download_model` rejects truncated downloads (Content-Length check) before promoting a `.part` file. (Full SHA256 digest verification tracked for a later pass.)
+- Input coercion — numeric tool parameters that aren't real numbers are dropped rather than handed to whisper-cli as `NaN`.
+
+**Robustness:**
+- **Foreground timeout guard** — a file long enough to exceed Claude Desktop's ~4-minute MCP tool timeout in blocking mode is detected up front and routed to background instead of silently timing out. Threshold configurable via `WHISPER_FOREGROUND_MAX_SEC`. Time estimates corrected (the old GPU estimate badly under-predicted; the dominant model-reload cost is now modeled — measured, not guessed).
+- Atomic job/batch state writes (temp-file + rename) so a concurrent reader can't observe a torn JSON file.
+- Collision-proof job/batch/temp IDs (UUID-suffixed).
+- Graceful SIGINT/SIGTERM shutdown that cleans up blocking-mode temp files.
+
+**GPU device selection:**
+- `WHISPER_GPU_DEVICE` env var, and `gpu_device` now plumbed through `generate_subtitles` and the language-detect pass (was `transcribe_audio` only). `check_config` reports the active device. `check_system` no longer misreports a driver issue when `wmic` (deprecated on Windows 11 24H2+) returns nothing.
+
+**Quality:**
+- A `node:test` unit-test suite over the pure logic (path containment, gate keying, atomic writes, input coercion, the timeout estimate), zero added dependencies, plus a GitHub Actions CI workflow running it on every push/PR.
+
+**Identified for a future release:** a persistent-model path (e.g. whisper.cpp's `whisper-server`) to eliminate the model-reload cost paid on every transcription — a large throughput win for batch/archive work.
+
 ---
 
-## Planned — v2.4.0: Bun Migration
+## Planned — v2.5.0: Bun Migration
 
 Migrate the runtime from Node.js to [Bun](https://bun.sh).
 

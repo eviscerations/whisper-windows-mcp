@@ -18,8 +18,13 @@ import {
   openSync, closeSync, statSync,
 } from "fs";
 import { cpus, tmpdir } from "os";
-import { join, extname, basename, dirname } from "path";
+import { join, extname, basename, dirname, resolve } from "path";
 import { promisify } from "util";
+import { randomUUID } from "crypto";
+import {
+  coerceNum, writeJsonAtomic, estimateWordCount, opKeyFor, isInsideDir,
+  extractTranscriptFromLog, parseLastTimestamp, formatDuration, estimateSec, estimateTime,
+} from "./lib.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +42,47 @@ const FFMPEG_PATH =
 const SYSTEM_THREADS = cpus().length;
 const DEFAULT_THREADS = Math.max(2, Math.floor(SYSTEM_THREADS / 2));
 const WHISPER_THREADS = parseInt(process.env.WHISPER_THREADS ?? String(DEFAULT_THREADS), 10);
+
+// Optional global default GPU/Vulkan device index passed to whisper-cli as --device N.
+// Lets a multi-GPU box pin a specific card without passing gpu_device on every call.
+// Per-call gpu_device overrides this; unset → whisper-cli's own default (device 0).
+// ⚠ This is the Vulkan ENUMERATION index (whisper-cli logs "ggml_vulkan: 0 = <name>"),
+// which is NOT guaranteed to match Windows GPU0/GPU1 — read the startup log to pick correctly.
+const _whisperGpuEnv = process.env.WHISPER_GPU_DEVICE;
+const WHISPER_GPU_DEVICE: number | undefined =
+  _whisperGpuEnv !== undefined && _whisperGpuEnv.trim() !== "" && !Number.isNaN(parseInt(_whisperGpuEnv, 10))
+    ? parseInt(_whisperGpuEnv, 10)
+    : undefined;
+
+// Foreground transcription guard: if the estimated time (fixed model-load cost + transcribe) exceeds
+// this many seconds, a blocking (foreground) run is refused and routed to background mode instead —
+// avoiding a silent timeout against Claude Desktop's ~4-minute (240s) MCP tool-call ceiling.
+// Default 210 leaves ~30s headroom under the wall. Configurable via WHISPER_FOREGROUND_MAX_SEC.
+const FOREGROUND_MAX_SEC =
+  parseInt(process.env.WHISPER_FOREGROUND_MAX_SEC ?? "210", 10) || 210;
+
+/** Effective GPU device: a numeric per-call arg wins, else the WHISPER_GPU_DEVICE env default, else undefined. */
+function resolveGpuDevice(arg: unknown): number | undefined {
+  if (arg !== undefined) {
+    const n = Number(arg);
+    if (!Number.isNaN(n)) return n;
+  }
+  return WHISPER_GPU_DEVICE;
+}
+
+
+// Temp WAVs from BLOCKING transcriptions only — never detached-job temps (a running
+// background whisper-cli still needs its WAV). Cleaned best-effort on graceful shutdown.
+const activeTempFiles = new Set<string>();
+
+function gracefulShutdown(signal: string): void {
+  let cleaned = 0;
+  for (const f of activeTempFiles) {
+    try { if (existsSync(f)) { unlinkSync(f); cleaned++; } } catch { /* best effort */ }
+  }
+  console.error(`whisper-windows-mcp: ${signal} — cleaned ${cleaned} blocking temp file(s), exiting.`);
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------------------
 // Privacy configuration
@@ -174,11 +220,16 @@ const PRIVACY_MODE_DISCLOSURE = [
 ].join("\n");
 
 // Per-operation privacy gate state.
-// Arms on first call (shows disclosure, blocks operation).
-// Clears on second call (user confirmed, allows operation).
-// Resets automatically so each distinct operation requires confirmation again.
-// Completely independent of sessionConsentGiven — serves different users and modes.
-let privacyConsentArmed = false;
+// Each distinct operation (identified by a stable key over its tool name + arguments)
+// arms independently: first call for that key shows the disclosure and blocks; the
+// second call with the SAME key clears it and proceeds. Keying per-operation closes
+// the v2.3.0 hole where a single global flag let one operation's confirmation be
+// silently consumed by a different operation. Completely independent of
+// sessionConsentGiven — serves different users and modes.
+const privacyArmed = new Map<string, number>(); // opKey -> armed-at epoch ms
+// Armed disclosures expire so an abandoned confirmation can never satisfy a later
+// operation, and the map can never grow without bound on a long-lived server.
+const PRIVACY_GATE_TTL_MS = 10 * 60 * 1000;
 
 // Session-scoped consent tracking — resets each time Claude Desktop restarts
 // the MCP server process. Pre-set from env var so users who have set
@@ -186,29 +237,31 @@ let privacyConsentArmed = false;
 // Has no effect when privacy mode is active (privacy mode uses its own gate).
 let sessionConsentGiven = WHISPER_CONSENT_ACKNOWLEDGED;
 
-/** Estimate word count from transcript text. */
-function estimateWordCount(text: string): number {
-  return text.split(/\s+/).filter((w: string) => w.trim().length > 0).length;
-}
+
 
 /**
- * Pre-transcription gate for privacy mode.
+ * Pre-transcription gate for privacy mode, scoped to a single operation by opKey.
  * Call this when effective privacy mode is active, BEFORE any audio processing.
  *
  * Returns true  → block this call, show PRIVACY_MODE_DISCLOSURE to user.
- * Returns false → user has confirmed, proceed with the operation.
+ * Returns false → user has confirmed THIS operation, proceed.
  *
- * Mechanism: arms on first call (block), clears on second (allow). State resets
- * automatically so the next distinct operation requires confirmation again.
- * Only call when effective privacy mode is active.
+ * Mechanism: first call for opKey arms it (block); the second call with the same
+ * opKey clears it (allow). Each distinct operation is independent — confirming one
+ * can never satisfy another. Stale arms older than PRIVACY_GATE_TTL_MS are evicted
+ * on every call. Only call when effective privacy mode is active.
  */
-function checkPrivacyGate(): boolean {
-  if (!privacyConsentArmed) {
-    privacyConsentArmed = true;
-    return true;  // block — show disclosure
+function checkPrivacyGate(opKey: string): boolean {
+  const now = Date.now();
+  for (const [k, armedAt] of privacyArmed) {
+    if (now - armedAt > PRIVACY_GATE_TTL_MS) privacyArmed.delete(k);
   }
-  privacyConsentArmed = false;
-  return false; // allow — proceed
+  if (!privacyArmed.has(opKey)) {
+    privacyArmed.set(opKey, now);
+    return true;  // first sight of this exact operation — block, show disclosure
+  }
+  privacyArmed.delete(opKey);
+  return false;   // same operation re-issued — user confirmed — allow
 }
 
 /** Returns the privacy mode disclosure as a tool response. */
@@ -300,6 +353,7 @@ function validateInputPath(filePath: string): string | null {
   return null;
 }
 
+
 /**
  * Check whether a whisper-cli.exe process is already running.
  * Uses tasklist /FI which is available on all Windows versions.
@@ -388,7 +442,7 @@ async function spawnDetached(
 ): Promise<{ jobId: string; pid: number }> {
   ensureJobsDir();
 
-  const jobId = `job_${Date.now()}`;
+  const jobId = `job_${Date.now()}_${randomUUID().slice(0, 8)}`;
   const logPath = join(JOBS_DIR, `${jobId}.log`);
   const jobPath = join(JOBS_DIR, `${jobId}.json`);
 
@@ -496,7 +550,7 @@ async function spawnDetached(
     privacyMode,
   };
 
-  writeFileSync(jobPath, JSON.stringify(job, null, 2), "utf8");
+  writeJsonAtomic(jobPath, job);
   return { jobId, pid };
 }
 
@@ -513,30 +567,6 @@ async function isPidRunning(pid: number): Promise<boolean> {
   }
 }
 
-/**
- * Recover timestamped transcript from the whisper log file.
- * When spawnDetached runs in "timestamps" mode, stdout (which contains
- * "[HH:MM:SS.mmm --> HH:MM:SS.mmm]  text" lines) is redirected to the log.
- * This function filters out whisper diagnostic noise and returns only the
- * transcript segments.
- */
-function extractTranscriptFromLog(logContent: string): string {
-  return logContent
-    .split(/\r?\n/)
-    .filter((l: string) => /^\[\d{2}:\d{2}:\d{2}\.\d{3} --> /.test(l))
-    .join("\n");
-}
-
-function parseLastTimestamp(logContent: string): number {
-  const re = /\[(\d{2}):(\d{2}):(\d{2})\.\d{3} -->/g;
-  let lastSec = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(logContent)) !== null) {
-    const sec = parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
-    if (sec > lastSec) lastSec = sec;
-  }
-  return lastSec;
-}
 
 /**
  * Read job progress and return a status string.
@@ -576,7 +606,7 @@ async function readJobProgress(jobId: string, privacyModeOverride?: boolean): Pr
       if (!existsSync(job.outputPath) && existsSync(job.logPath)) {
         const transcript = extractTranscriptFromLog(readFileSync(job.logPath, "utf8"));
         if (transcript) {
-          try { writeFileSync(job.outputPath, transcript, "utf8"); } catch { }
+          try { writeFileSync(job.outputPath, transcript, "utf8"); } catch (e: any) { console.error(`whisper-windows-mcp: failed to write transcript to ${job.outputPath}: ${e?.message}`); }
         }
       }
     } else if (existsSync(tmpOutput) && tmpOutput !== job.outputPath) {
@@ -591,7 +621,7 @@ async function readJobProgress(jobId: string, privacyModeOverride?: boolean): Pr
     // Bug 2 fix: explicit check that the output file landed where expected.
     if (!existsSync(job.outputPath)) {
       job.status = "failed";
-      writeFileSync(job.jobPath, JSON.stringify(job, null, 2), "utf8");
+      writeJsonAtomic(job.jobPath, job);
       return (
         `❌ Output file write failed.\n\n` +
         `Transcription completed but the output could not be written to:\n${job.outputPath}\n\n` +
@@ -601,7 +631,7 @@ async function readJobProgress(jobId: string, privacyModeOverride?: boolean): Pr
     }
 
     job.status = "complete";
-    writeFileSync(job.jobPath, JSON.stringify(job, null, 2), "utf8");
+    writeJsonAtomic(job.jobPath, job);
 
     // Clean up tmp wav if present
     if (job.isTmp && existsSync(job.transcribeFrom)) {
@@ -638,7 +668,7 @@ async function readJobProgress(jobId: string, privacyModeOverride?: boolean): Pr
   // Failed
   if (!isRunning && !outputExists) {
     job.status = "failed";
-    writeFileSync(job.jobPath, JSON.stringify(job, null, 2), "utf8");
+    writeJsonAtomic(job.jobPath, job);
     const lastLines = logContent.split(/\r?\n/).filter(l => l.trim()).slice(-5).join("\n");
     return (
       `❌ Failed or cancelled.\n\n` +
@@ -723,12 +753,12 @@ async function spawnNextBatchJob(state: BatchState): Promise<void> {
           state.privacyMode
         );
         state.files[i].jobId = jobId;
-        writeFileSync(state.batchPath, JSON.stringify(state, null, 2), "utf8");
+        writeJsonAtomic(state.batchPath, state);
         return;
       }
     }
     state.status = "complete";
-    writeFileSync(state.batchPath, JSON.stringify(state, null, 2), "utf8");
+    writeJsonAtomic(state.batchPath, state);
   } finally {
     batchSpawning = false;
   }
@@ -761,7 +791,7 @@ async function readBatchProgress(batchId: string): Promise<string> {
           if (!existsSync(job.outputPath) && existsSync(job.logPath)) {
             const transcript = extractTranscriptFromLog(readFileSync(job.logPath, "utf8"));
             if (transcript) {
-              try { writeFileSync(job.outputPath, transcript, "utf8"); } catch { }
+              try { writeFileSync(job.outputPath, transcript, "utf8"); } catch (e: any) { console.error(`whisper-windows-mcp: failed to write transcript to ${job.outputPath}: ${e?.message}`); }
             }
           }
         } else if (existsSync(tmpOutput) && tmpOutput !== job.outputPath) {
@@ -789,10 +819,10 @@ async function readBatchProgress(batchId: string): Promise<string> {
           await spawnNextBatchJob(state);
         } else {
           state.status = "complete";
-          writeFileSync(batchPath, JSON.stringify(state, null, 2), "utf8");
+          writeJsonAtomic(batchPath, state);
         }
       } else {
-        writeFileSync(batchPath, JSON.stringify(state, null, 2), "utf8");
+        writeJsonAtomic(batchPath, state);
       }
     }
   } else if (state.status !== "complete" && state.files.some(f => f.status === "pending")) {
@@ -970,22 +1000,7 @@ async function probeFile(filePath: string): Promise<MediaInfo | null> {
   }
 }
 
-function formatDuration(sec: number): string {
-  if (!sec) return "?:??";
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
-function estimateTime(durationSec: number, gpu: boolean): string {
-  if (!durationSec) return "?";
-  const ratio = gpu ? 0.12 : 1.5;
-  const estSec = Math.round(durationSec * ratio);
-  if (estSec < 60) return `~${estSec}s`;
-  return `~${Math.round(estSec / 60)}m`;
-}
 
 function padEnd(str: string, len: number): string {
   return str.length >= len ? str.slice(0, len) : str + " ".repeat(len - str.length);
@@ -1000,7 +1015,7 @@ function isSupportedFile(filePath: string): boolean {
 }
 
 async function convertToWav(inputPath: string): Promise<string> {
-  const tmpFile = join(tmpdir(), `whisper_tmp_${Date.now()}.wav`);
+  const tmpFile = join(tmpdir(), `whisper_tmp_${Date.now()}_${randomUUID().slice(0, 8)}.wav`);
   await execFileAsync(FFMPEG_PATH, [
     "-y", "-i", inputPath,
     "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmpFile,
@@ -1081,15 +1096,17 @@ function buildArgs(filePath: string, model: string, opts: WhisperOptions): strin
   return args;
 }
 
-async function detectLanguage(wavPath: string, model: string, threads: number): Promise<string | null> {
+async function detectLanguage(wavPath: string, model: string, threads: number, gpuDevice?: number): Promise<string | null> {
   try {
-    const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, [
+    const dlArgs = [
       "-m", model, "-f", wavPath,
       "-l", "auto",
       "-t", String(threads),
       "--no-timestamps",
       "--duration", "30000",
-    ], { maxBuffer: 10 * 1024 * 1024, windowsHide: true });
+    ];
+    if (gpuDevice !== undefined) dlArgs.push("--device", String(gpuDevice));
+    const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, dlArgs, { maxBuffer: 10 * 1024 * 1024, windowsHide: true });
     const output = stdout + stderr;
     const m = output.match(/auto-detected language:\s*([a-z]{2,3})/i);
     return m ? m[1].toLowerCase() : null;
@@ -1145,6 +1162,7 @@ async function transcribeSingle(
 
   if (needsConversion(filePath)) {
     tmpFile = await convertToWav(filePath);
+    activeTempFiles.add(tmpFile);
     transcribeFrom = tmpFile;
   }
 
@@ -1182,7 +1200,7 @@ async function transcribeSingle(
 
     return { text: output };
   } finally {
-    if (tmpFile && existsSync(tmpFile)) try { unlinkSync(tmpFile); } catch { }
+    if (tmpFile) { activeTempFiles.delete(tmpFile); if (existsSync(tmpFile)) try { unlinkSync(tmpFile); } catch { } }
   }
 }
 
@@ -1201,7 +1219,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "2.3.0" },
+  { name: "whisper-windows-mcp", version: "2.4.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -1242,7 +1260,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           no_speech_thold: { type: "number", description: "Confidence threshold below which segments are treated as silence. Default 0.6.", default: 0.6 },
           beam_size: { type: "number", description: "Beam search width. Higher = more accurate but slower. Default 5." },
           best_of: { type: "number", description: "Number of candidate sequences to evaluate. Default 5." },
-          gpu_device: { type: "number", description: "GPU device index for multi-GPU systems. Default 0." },
+          gpu_device: { type: "number", description: "GPU/Vulkan device index for multi-GPU systems. Overrides the WHISPER_GPU_DEVICE env default. Check whisper-cli's startup log for the index that lists your target card." },
           processors: { type: "number", description: "Number of parallel processors. Default 1." },
           word_timestamps: { type: "boolean", description: "Output one word per timestamped segment. Useful for clip alignment.", default: false },
           max_segment_length: { type: "number", description: "Maximum segment length in characters." },
@@ -1339,6 +1357,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           best_of: { type: "number", description: "Candidate sequences evaluated. Default 5." },
           diarize: { type: "boolean", description: "Stereo speaker diarization. Requires stereo audio.", default: false },
           vad_model: { type: "string", description: "Path to Silero VAD model .bin. Strips silence before transcription." },
+          gpu_device: { type: "number", description: "GPU/Vulkan device index for multi-GPU systems. Overrides the WHISPER_GPU_DEVICE env default. Check whisper-cli's startup log for the index that lists your target card." },
         },
         required: ["file_path"],
       },
@@ -1482,9 +1501,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `whisper-cli: ${WHISPER_CLI_PATH}\n` +
           `Model:       ${WHISPER_MODEL}\n` +
           `Threads:     ${WHISPER_THREADS} of ${SYSTEM_THREADS} logical cores\n` +
+          `GPU device:  ${WHISPER_GPU_DEVICE !== undefined ? `--device ${WHISPER_GPU_DEVICE} (WHISPER_GPU_DEVICE)` : "whisper-cli default (device 0)"}\n` +
           `FFmpeg:      ${ffmpegStatus}\n` +
           `Privacy mode: ${WHISPER_PRIVACY_MODE ? "✅ active (WHISPER_PRIVACY_MODE=true)" : "off"}\n\n` +
-          `Optional env vars: WHISPER_THREADS, FFMPEG_PATH, WHISPER_PRIVACY_MODE, WHISPER_CONSENT_ACKNOWLEDGED`,
+          `Optional env vars: WHISPER_THREADS, WHISPER_GPU_DEVICE, WHISPER_FOREGROUND_MAX_SEC, FFMPEG_PATH, WHISPER_PRIVACY_MODE, WHISPER_CONSENT_ACKNOWLEDGED`,
       }],
     };
   }
@@ -1597,7 +1617,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     let gpuLines = "";
     if (gpus.length === 0) {
-      gpuLines = "⚠️  No GPU detected via wmic — this may indicate a driver issue.\n";
+      gpuLines = "ℹ️  GPU name unavailable (wmic returned nothing — it is deprecated/removed on Windows 11 24H2+). This does NOT mean acceleration is off; the Vulkan check below determines actual GPU use.\n";
     } else {
       for (const gpu of gpus) {
         const vramStr = formatVram(gpu.vramBytes);
@@ -1760,6 +1780,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             file.on("finish", () => {
               file.close((closeErr) => {
                 if (closeErr) { reject(closeErr); return; }
+                // Integrity: if the server declared a Content-Length, reject a short/truncated
+                // download (dropped connection) BEFORE promoting .part → final, so a partial
+                // file can never become the "installed" model. (Full SHA256 verification is a
+                // separate follow-up requiring verified per-model digests.)
+                const expectedLen = parseInt(res.headers["content-length"] ?? "", 10);
+                let actualLen = 0;
+                try { actualLen = fs.statSync(tmpPath).size; } catch { }
+                if (Number.isFinite(expectedLen) && expectedLen > 0 && actualLen !== expectedLen) {
+                  try { fs.unlinkSync(tmpPath); } catch { }
+                  reject(new Error(`Incomplete download: wrote ${actualLen} of ${expectedLen} bytes (connection dropped?). Re-run download_model to retry.`));
+                  return;
+                }
                 try {
                   fs.renameSync(tmpPath, destPath);
                   resolve();
@@ -1817,11 +1849,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     const modelsDir = dirname(WHISPER_MODEL);
-    const resolvedPath = modelInput.includes("\\") || modelInput.includes("/")
-      ? modelInput
-      : join(modelsDir, modelInput);
+    // Normalize to an absolute, canonical path first so the containment check and
+    // every downstream use (existsSync, basename, WHISPER_MODEL assignment) operate
+    // on a clean path — never a relative-to-cwd or sibling-prefix string.
+    const resolvedPath = resolve(
+      modelInput.includes("\\") || modelInput.includes("/")
+        ? modelInput
+        : join(modelsDir, modelInput)
+    );
 
-    if (!resolvedPath.startsWith(modelsDir)) {
+    if (!isInsideDir(resolvedPath, modelsDir)) {
       return {
         content: [{ type: "text", text: `Security error: model must be within the configured models directory (${modelsDir}).` }],
         isError: true,
@@ -1884,21 +1921,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // v2.3.0 quality and control params
     const extraOpts: Partial<WhisperOptions> = {};
-    if (args?.temperature !== undefined) extraOpts.temperature = Number(args.temperature);
+    if (args?.temperature !== undefined) extraOpts.temperature = coerceNum(args.temperature);
     if (args?.prompt) extraOpts.prompt = String(args.prompt);
     if (args?.condition_on_prev_text !== undefined) extraOpts.conditionOnPrevText = Boolean(args.condition_on_prev_text);
-    if (args?.no_speech_thold !== undefined) extraOpts.noSpeechThold = Number(args.no_speech_thold);
-    if (args?.beam_size !== undefined) extraOpts.beamSize = Number(args.beam_size);
-    if (args?.best_of !== undefined) extraOpts.bestOf = Number(args.best_of);
-    if (args?.gpu_device !== undefined) extraOpts.gpuDevice = Number(args.gpu_device);
-    if (args?.processors !== undefined) extraOpts.processors = Number(args.processors);
+    if (args?.no_speech_thold !== undefined) extraOpts.noSpeechThold = coerceNum(args.no_speech_thold);
+    if (args?.beam_size !== undefined) extraOpts.beamSize = coerceNum(args.beam_size);
+    if (args?.best_of !== undefined) extraOpts.bestOf = coerceNum(args.best_of);
+    { const g = resolveGpuDevice(args?.gpu_device); if (g !== undefined) extraOpts.gpuDevice = g; }
+    if (args?.processors !== undefined) extraOpts.processors = coerceNum(args.processors);
     if (args?.word_timestamps) extraOpts.wordTimestamps = true;
-    if (args?.max_segment_length !== undefined) extraOpts.maxLen = Number(args.max_segment_length);
+    if (args?.max_segment_length !== undefined) extraOpts.maxLen = coerceNum(args.max_segment_length);
     if (args?.split_on_word) extraOpts.splitOnWord = true;
     if (args?.diarize) extraOpts.diarize = true;
     if (args?.vad_model) extraOpts.vadModel = String(args.vad_model);
-    if (args?.offset_t !== undefined) extraOpts.offsetT = Number(args.offset_t);
-    if (args?.duration !== undefined) extraOpts.duration = Number(args.duration);
+    if (args?.offset_t !== undefined) extraOpts.offsetT = coerceNum(args.offset_t);
+    if (args?.duration !== undefined) extraOpts.duration = coerceNum(args.duration);
 
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
     const pathError = validateInputPath(filePath);
@@ -1914,7 +1951,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // At this point no transcript exists yet — there is nothing to gate. The gate
       // fires at check_progress completion when transcript text would first be returned
       // to the API. Audio processing begins immediately after this point in non-privacy mode.
-      if (effectivePrivacyMode && checkPrivacyGate()) {
+      if (effectivePrivacyMode && checkPrivacyGate(opKeyFor(name, args))) {
         return { content: [{ type: "text", text: privacyGateBlock() }] };
       }
 
@@ -1948,10 +1985,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
+    // Foreground timeout guard: a long file blows Claude Desktop's ~4-min MCP timeout in blocking
+    // mode (the call errors even though the transcript finishes on disk). Probe the duration and
+    // route to background BEFORE running into the wall. Skipped when ffprobe can't read the file
+    // (probe returns null) — it never blocks a transcribe it cannot measure.
+    {
+      const info = await probeFile(filePath);
+      if (info && estimateSec(info.durationSec, hasVulkanDll()) > FOREGROUND_MAX_SEC) {
+        return { content: [{ type: "text", text:
+          `⏱️  "${basename(filePath)}" is ~${formatDuration(info.durationSec)} long — a foreground transcription is estimated around ${estimateTime(info.durationSec, hasVulkanDll())}, which would likely exceed Claude Desktop's 4-minute tool timeout (the transcript would still finish on disk, but this call would error out first).\n\n` +
+          `Run it in the background instead — returns a job ID immediately, then poll check_progress:\n` +
+          `  transcribe_audio with file_path="${filePath}" and background=true\n\n` +
+          `(Shorter files still run inline. Adjust the cutoff with WHISPER_FOREGROUND_MAX_SEC.)` }] };
+      }
+    }
+
     // Blocking mode (default)
     if (effectivePrivacyMode) {
       // Privacy mode: gate fires before every operation.
-      if (checkPrivacyGate()) {
+      if (checkPrivacyGate(opKeyFor(name, args))) {
         return { content: [{ type: "text", text: privacyGateBlock() }] };
       }
       // Gate passed — proceed to transcription, return metadata only.
@@ -2022,7 +2074,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // Privacy gate: fires once before batch starts. All files then process unattended.
     // Gating per-file in an unattended batch would defeat the purpose of start_batch.
-    if (effectivePrivacyMode && checkPrivacyGate()) {
+    if (effectivePrivacyMode && checkPrivacyGate(opKeyFor(name, args))) {
       return { content: [{ type: "text", text: privacyGateBlock() }] };
     }
 
@@ -2050,7 +2102,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     batchFiles.sort((a, b) => a.durationSec - b.durationSec);
 
     ensureJobsDir();
-    const batchId = `batch_${Date.now()}`;
+    const batchId = `batch_${Date.now()}_${randomUUID().slice(0, 8)}`;
     const batchPath = join(JOBS_DIR, `${batchId}.batch.json`);
 
     const state: BatchState = {
@@ -2068,7 +2120,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       privacyMode: effectivePrivacyMode,
     };
 
-    writeFileSync(batchPath, JSON.stringify(state, null, 2), "utf8");
+    writeJsonAtomic(batchPath, state);
     await spawnNextBatchJob(state);
 
     const totalDuration = batchFiles.reduce((acc, f) => acc + f.durationSec, 0);
@@ -2117,12 +2169,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // v2.3.0 quality params
     const extraOpts: Partial<WhisperOptions> = {};
-    if (args?.temperature !== undefined) extraOpts.temperature = Number(args.temperature);
+    if (args?.temperature !== undefined) extraOpts.temperature = coerceNum(args.temperature);
     if (args?.prompt) extraOpts.prompt = String(args.prompt);
-    if (args?.beam_size !== undefined) extraOpts.beamSize = Number(args.beam_size);
-    if (args?.best_of !== undefined) extraOpts.bestOf = Number(args.best_of);
+    if (args?.beam_size !== undefined) extraOpts.beamSize = coerceNum(args.beam_size);
+    if (args?.best_of !== undefined) extraOpts.bestOf = coerceNum(args.best_of);
     if (args?.diarize) extraOpts.diarize = true;
     if (args?.vad_model) extraOpts.vadModel = String(args.vad_model);
+    { const g = resolveGpuDevice(args?.gpu_device); if (g !== undefined) extraOpts.gpuDevice = g; }
 
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
     const pathError = validateInputPath(filePath);
@@ -2157,11 +2210,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
+    // Foreground timeout guard (same as transcribe_audio): subtitle generation runs MULTIPLE
+    // whisper passes inline (auto-detect + native + optional translation), so a long file is even
+    // more likely to blow the 4-min MCP timeout. Route to background before running into the wall.
+    {
+      const info = await probeFile(filePath);
+      if (info && estimateSec(info.durationSec, hasVulkanDll()) > FOREGROUND_MAX_SEC) {
+        return { content: [{ type: "text", text:
+          `⏱️  "${basename(filePath)}" is ~${formatDuration(info.durationSec)} long — foreground subtitle generation (estimated ~${estimateTime(info.durationSec, hasVulkanDll())}, plus extra passes for auto-detect/translation) would likely exceed Claude Desktop's 4-minute tool timeout.\n\n` +
+          `Run it in the background instead:\n` +
+          `  generate_subtitles with file_path="${filePath}" and background=true\n\n` +
+          `(translate_to_english isn't available in background mode — run a second pass after it completes. Adjust the cutoff with WHISPER_FOREGROUND_MAX_SEC.)` }] };
+      }
+    }
+
     try {
       let transcribeFrom = filePath;
       let tmpFile: string | null = null;
       if (needsConversion(filePath)) {
         tmpFile = await convertToWav(filePath);
+        activeTempFiles.add(tmpFile);
         transcribeFrom = tmpFile;
       }
 
@@ -2170,7 +2238,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       let detectedLang = language;
       if (language === "auto") {
-        const detected = await detectLanguage(transcribeFrom, WHISPER_MODEL, threads);
+        const detected = await detectLanguage(transcribeFrom, WHISPER_MODEL, threads, extraOpts.gpuDevice);
         detectedLang = detected ?? "en";
       }
 
@@ -2189,7 +2257,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         results.push(`✅ English translation: ${englishDest}`);
       }
 
-      if (tmpFile && existsSync(tmpFile)) try { unlinkSync(tmpFile); } catch { }
+      if (tmpFile) { activeTempFiles.delete(tmpFile); if (existsSync(tmpFile)) try { unlinkSync(tmpFile); } catch { } }
 
       const langNote = language === "auto"
         ? `Auto-detected language: ${detectedLang}\n\n`
@@ -2275,7 +2343,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // v2.3.0: Privacy gate fires before each file in privacy mode.
       // Each file in transcribe_batch is a separate tool call, so each
       // gets its own confirmation — correct for interactive mode.
-      if (effectivePrivacyMode && checkPrivacyGate()) {
+      if (effectivePrivacyMode && checkPrivacyGate(opKeyFor(name, args))) {
         return { content: [{ type: "text", text: privacyGateBlock() }] };
       }
 
@@ -2337,9 +2405,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ---------------------------------------------------------------------------
 async function main() {
   cleanupOldJobFiles();
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v2.3.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS} | privacy: ${WHISPER_PRIVACY_MODE ? "on" : "off"}`);
+  console.error(`whisper-windows-mcp v2.4.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS} | privacy: ${WHISPER_PRIVACY_MODE ? "on" : "off"}`);
 }
 
 main().catch((err) => {
