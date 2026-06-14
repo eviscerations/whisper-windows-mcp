@@ -89,6 +89,8 @@ Când modul de confidențialitate este activ, o dezvăluire de confirmare este a
 
 Textul dezvăluirii este identic de fiecare dată prin design. Repetiția este intenționată: dacă gestionezi conținut sensibil, ar trebui să confirmi explicit fiecare operațiune.
 
+Confirmarea este legată de **operațiunea specifică** — instrumentul împreună cu argumentele sale exacte. Confirmarea unei transcrieri nu poate satisface bariera unei alte operațiuni, iar modificarea oricărui parametru este tratată ca o operațiune nouă care necesită propria confirmare.
+
 Pentru `start_batch` cu modul de confidențialitate: o confirmare este necesară înainte de începerea lotului. Toate fișierele sunt apoi procesate nesupravegheate. Niciun text de transcriere nu este returnat în niciun moment — doar metadate de progres ale lotului.
 
 ---

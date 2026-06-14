@@ -89,6 +89,8 @@ Gdy tryb prywatności jest aktywny, potwierdzenie ujawnienia jest wyświetlane *
 
 Tekst ujawnienia jest identyczny za każdym razem z projektu. Powtórzenie jest istotą: jeśli obsługujesz wrażliwe treści, powinieneś jawnie potwierdzać każdą operację.
 
+Potwierdzenie jest powiązane z **konkretną operacją** — narzędziem wraz z jego dokładnymi argumentami. Potwierdzenie jednej transkrypcji nie może spełnić bramki innej operacji, a zmiana dowolnego parametru jest traktowana jako nowa operacja wymagająca własnego potwierdzenia.
+
 Dla `start_batch` z trybem prywatności: przed rozpoczęciem partii wymagane jest jedno potwierdzenie. Następnie wszystkie pliki są przetwarzane bez nadzoru. Tekst transkrypcji nie jest zwracany w żadnym momencie — tylko metadane postępu partii.
 
 ---

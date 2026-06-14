@@ -89,6 +89,8 @@ Saat mode privasi aktif, konfirmasi pengungkapan ditampilkan **sebelum setiap op
 
 Teks pengungkapan identik setiap saat berdasarkan desain. Pengulangannya adalah intinya: jika Anda menangani konten sensitif, Anda harus mengkonfirmasi setiap operasi secara eksplisit.
 
+Konfirmasi terikat pada **operasi spesifik** — alat beserta argumen persisnya. Mengonfirmasi satu transkripsi tidak dapat memenuhi gerbang operasi yang berbeda, dan mengubah parameter apa pun diperlakukan sebagai operasi baru yang memerlukan konfirmasinya sendiri.
+
 Untuk `start_batch` dengan mode privasi: satu konfirmasi diperlukan sebelum batch dimulai. Semua file kemudian diproses tanpa pengawasan. Tidak ada teks transkrip yang dikembalikan pada titik mana pun — hanya metadata kemajuan batch.
 
 ---

@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Windows向けのネイティブMCP（Model Context Protocol）サーバーです。[whisper.cpp](https://github.com/ggml-org/whisper.cpp)を使用して、Claude Desktopで音声・動画ファイルをローカルに文字起こしできます。GPU加速、多言語対応、バッチ処理に対応しています。すべての文字起こし処理はローカルで実行 — 音声・動画ファイルやファイルパスが外部に送信されることは一切ありません。
 
 > **なぜこのパッケージが存在するのか？**
@@ -375,6 +379,8 @@ whisper-windows-mcpには機密および規制対象コンテンツ向けの組�
 | `WHISPER_CLI_PATH` | whisper-cli.exeへのパス（必須） |
 | `WHISPER_MODEL` | モデル.binファイルへのパス（必須） |
 | `WHISPER_THREADS` | CPUスレッド数の上書き |
+| `WHISPER_GPU_DEVICE` | マルチGPUシステムで文字起こしを固定するVulkanデバイスのインデックス（VulkanのenumerationインデックスでありWindowsのGPU順序ではありません — whisper-cliの起動ログを確認してください）。per-callで`gpu_device`により上書き可能。[TROUBLESHOOTING.md](TROUBLESHOOTING.md)を参照。 |
+| `WHISPER_FOREGROUND_MAX_SEC` | フォアグラウンド文字起こしの上限秒数（デフォルト210）。これより長く実行されると推定されるファイルは、Claude Desktopの約4分のツールタイムアウトのリスクを冒す代わりにバックグラウンドモードにルーティングされます。 |
 | `FFMPEG_PATH` | ffmpegがシステムPATHにない場合のパス |
 | `WHISPER_PRIVACY_MODE` | `true`の場合、すべてのツールレスポンスはメタデータのみを返し、トランスクリプトテキストはClaudeのAPIに送信されません。規制対象または機密性の高いコンテンツに使用します。per-callで`privacy_mode`パラメータを使用して上書き可能。[PRIVACY.md](PRIVACY.md)を参照。 |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | `true`の場合、トランスクリプトテキストが返される前の一回限りのセッション同意開示をスキップします。プライバシーの境界を理解し、リマインダーが不要になったら設定してください。プライバシーモードが有効な場合には効果がありません。 |

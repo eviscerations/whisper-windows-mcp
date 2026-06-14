@@ -132,6 +132,12 @@ Luego transcribe el WAV directamente.
 
 ---
 
+## "Este archivo dura ~X — ejecútalo en segundo plano" / la transcripción en primer plano agota el tiempo
+
+Claude Desktop impone un tiempo de espera de ~4 minutos en cualquier llamada individual a una herramienta MCP. Un archivo largo transcrito en modo **primer plano** (bloqueante) puede superarlo — la transcripción aún termina y se escribe en disco, pero la propia llamada a la herramienta da error. Para evitar ese fallo silencioso, `transcribe_audio` y `generate_subtitles` estiman el tiempo de ejecución de antemano y, si probablemente cruzaría el límite, devuelven un mensaje indicándote que vuelvas a ejecutar con `background=true`. El modo en segundo plano devuelve un ID de tarea de inmediato y no tiene ese límite — monitorízalo con `check_progress`.
+
+Gran parte del tiempo real de una transcripción es **carga del modelo**, no transcripción: whisper-cli recarga el modelo en cada invocación, y un modelo grande (p. ej. `large-v3`, 2,9 GB) en una GPU con memoria limitada puede tardar ~2 minutos en cargar antes de que siquiera comience la transcripción (un modelo más pequeño o cuantizado carga más rápido). El umbral de la guarda es configurable con `WHISPER_FOREGROUND_MAX_SEC` (segundos; predeterminado 210).
+
 ## La tarea en segundo plano falla en archivos con caracteres especiales o Unicode en el nombre
 
 **Causa:** whisper-cli.exe no puede escribir el archivo de salida cuando la ruta contiene caracteres Unicode (español, japonés, chino, emoji, corchetes, etc.) o ciertos caracteres especiales.
@@ -172,6 +178,16 @@ Verifica que la aceleración GPU está activa:
 - Observa el Administrador de Tareas → Rendimiento → GPU durante una transcripción — la utilización de GPU debería subir al 15–30%
 
 ---
+
+## La transcripción se ejecuta en la GPU equivocada (sistemas multi-GPU)
+
+Por defecto, whisper-cli usa el dispositivo Vulkan 0. En una máquina con múltiples GPU, puede que no sea la tarjeta que quieres. Fija un dispositivo específico con la variable de entorno `WHISPER_GPU_DEVICE` (o el parámetro `gpu_device` por llamada, que ahora también funciona en `generate_subtitles`):
+
+```json
+"env": { "WHISPER_GPU_DEVICE": "1" }
+```
+
+⚠️ **El índice es el orden de enumeración de Vulkan, NO el orden "GPU 0 / GPU 1" de Windows** — a menudo difieren. Para encontrar el número correcto, ejecuta `whisper-cli.exe` sobre cualquier archivo una vez y lee su registro de inicio: imprime `ggml_vulkan: 0 = <nombre>`, `ggml_vulkan: 1 = <nombre>`. Usa el índice que liste tu tarjeta objetivo. `check_config` muestra el dispositivo activo para que puedas confirmar que la fijación surtió efecto.
 
 ## `check_system` reporta cantidad de VRAM incorrecta
 

@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Windows 전용 네이티브 MCP(Model Context Protocol) 서버입니다. [whisper.cpp](https://github.com/ggml-org/whisper.cpp)를 사용하여 Claude Desktop에서 음성 및 동영상 파일을 로컬로 전사합니다. GPU 가속, 다국어 지원, 배치 처리를 지원합니다. 모든 전사 처리는 로컬에서 실행 — 음성, 동영상 파일이나 파일 경로가 외부로 전송되는 일은 없습니다.
 
 > **왜 이 패키지가 존재하는가?**
@@ -364,6 +368,8 @@ whisper-windows-mcp에는 민감하고 규제 대상인 콘텐츠를 위한 내�
 | `WHISPER_CLI_PATH` | whisper-cli.exe 경로 (필수) |
 | `WHISPER_MODEL` | 모델 .bin 파일 경로 (필수) |
 | `WHISPER_THREADS` | CPU 스레드 수 재정의 |
+| `WHISPER_GPU_DEVICE` | 다중 GPU 시스템에서 전사를 고정할 Vulkan 장치 인덱스(Windows GPU 순서가 아닌 Vulkan 열거 인덱스 — whisper-cli 시작 로그를 확인하세요). 호출별 `gpu_device`로 재정의 가능합니다. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참고. |
+| `WHISPER_FOREGROUND_MAX_SEC` | 포그라운드 전사 한도(초, 기본값 210). 더 오래 실행될 것으로 추정되는 파일은 Claude Desktop의 약 4분 도구 타임아웃 위험을 감수하는 대신 백그라운드 모드로 라우팅됩니다. |
 | `FFMPEG_PATH` | ffmpeg가 시스템 PATH에 없을 경우 경로 |
 | `WHISPER_PRIVACY_MODE` | `true`로 설정하면 모든 도구 응답에서 전사 텍스트 없이 메타데이터만 반환됩니다. 규제 대상 또는 기밀 콘텐츠에 사용합니다. 호출별 `privacy_mode` 파라미터로 재정의 가능합니다. [PRIVACY.md](PRIVACY.md) 참고. |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | `true`로 설정하면 전사 텍스트 반환 전 표시되는 일회성 세션 동의 공개를 건너뜁니다. 개인 정보 경계를 이해하고 더 이상 알림이 필요하지 않을 때 설정하세요. 개인 정보 모드가 활성화된 경우 효과 없음. |

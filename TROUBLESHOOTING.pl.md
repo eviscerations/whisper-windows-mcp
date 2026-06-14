@@ -78,6 +78,16 @@ vulkaninfo
 
 Jakikolwiek wynik potwierdza dostępność Vulkan. Jeśli `vulkaninfo` nie działa, zainstaluj najnowszy sterownik GPU ze strony producenta.
 
+### Transkrypcja działa na niewłaściwym GPU (systemy z wieloma GPU)
+
+Domyślnie whisper-cli używa urządzenia Vulkan 0. Na maszynie z wieloma GPU może to nie być karta, której chcesz. Przypnij konkretne urządzenie zmienną środowiskową `WHISPER_GPU_DEVICE` (lub parametrem `gpu_device` dla pojedynczego wywołania, który teraz działa również w `generate_subtitles`):
+
+```json
+"env": { "WHISPER_GPU_DEVICE": "1" }
+```
+
+⚠️ **Indeks to kolejność enumeracji Vulkan, a NIE kolejność „GPU 0 / GPU 1" w Windows** — często się różnią. Aby znaleźć właściwy numer, uruchom `whisper-cli.exe` na dowolnym pliku raz i przeczytaj jego log startowy: wypisuje `ggml_vulkan: 0 = <nazwa>`, `ggml_vulkan: 1 = <nazwa>`. Użyj indeksu, który wymienia docelową kartę. `check_config` wyświetla aktywne urządzenie, więc możesz potwierdzić, że przypięcie zadziałało.
+
 ### VRAM raportowany jako połowa rzeczywistego rozmiaru (AMD)
 
 Jest to znany nюanс raportowania Windows dla GPU AMD. Rzeczywisty dostępny VRAM do przetwarzania jest zazwyczaj dwukrotnie większy niż to, co raportuje `wmic`. Rekomendacja modelu może być nadmiernie konserwatywna — możesz spróbować większego modelu niż zalecany.
@@ -153,6 +163,12 @@ Uwaga: nie ma efektu gdy tryb prywatności jest aktywny.
 ---
 
 ## Transkrypcja w tle i partia
+
+### "Ten plik trwa ~X — uruchom go w tle" / transkrypcja na pierwszym planie przekracza limit czasu
+
+Claude Desktop wymusza limit czasu ~4 minut na każde pojedyncze wywołanie narzędzia MCP. Długi plik transkrybowany w trybie **pierwszego planu** (blokującym) może go przekroczyć — transkrypcja i tak się kończy i jest zapisywana na dysku, ale samo wywołanie narzędzia kończy się błędem. Aby zapobiec temu cichemu niepowodzeniu, `transcribe_audio` i `generate_subtitles` szacują czas wykonania z góry i, jeśli prawdopodobnie przekroczyłby pułap, zwracają komunikat nakazujący ponowne uruchomienie z `background=true`. Tryb w tle natychmiast zwraca identyfikator zadania i nie ma takiego limitu — monitoruj go za pomocą `check_progress`.
+
+Duża część rzeczywistego czasu transkrypcji to **ładowanie modelu**, a nie transkrypcja: whisper-cli ponownie ładuje model przy każdym wywołaniu, a duży model (np. `large-v3`, 2,9 GB) na GPU z ograniczoną pamięcią może ładować się ~2 minuty, zanim transkrypcja w ogóle się zacznie (mniejszy lub skwantyzowany model ładuje się szybciej). Próg strażnika jest konfigurowalny za pomocą `WHISPER_FOREGROUND_MAX_SEC` (sekundy; domyślnie 210).
 
 ### Zadanie w tle nigdy nie pokazuje się jako ukończone
 

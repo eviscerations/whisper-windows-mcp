@@ -164,13 +164,13 @@ Because Claude Desktop spawns the MCP server fresh on every session startup, sta
 
 ---
 
-## Planned — v2.5.0: Enhanced Output Formats for External Tool Integration
+## Planned — v2.6.0: Enhanced Output Formats for External Tool Integration
 
 Extended output format support targeted at downstream analysis and integration workflows. Exact scope to be defined based on user feedback post-v2.3.0.
 
 ---
 
-## Planned — v2.6.0: Live Microphone Transcription Mode
+## Planned — v2.7.0: Live Microphone Transcription Mode
 
 Real-time transcription from a live microphone input. Stream audio from a selected recording device to whisper in chunks, returning rolling transcript segments as they complete.
 

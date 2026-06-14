@@ -79,6 +79,16 @@ vulkaninfo
 
 Output apa pun mengkonfirmasi Vulkan tersedia. Jika `vulkaninfo` gagal, pasang driver GPU terbaru dari situs vendor GPU Anda.
 
+### Transkripsi berjalan di GPU yang salah (sistem multi-GPU)
+
+Secara default whisper-cli menggunakan perangkat Vulkan 0. Pada mesin multi-GPU, itu mungkin bukan kartu yang Anda inginkan. Sematkan perangkat tertentu dengan variabel lingkungan `WHISPER_GPU_DEVICE` (atau parameter `gpu_device` per-panggilan, yang kini juga berfungsi pada `generate_subtitles`):
+
+```json
+"env": { "WHISPER_GPU_DEVICE": "1" }
+```
+
+⚠️ **Indeks adalah urutan enumerasi Vulkan, BUKAN urutan "GPU 0 / GPU 1" Windows** — keduanya sering berbeda. Untuk menemukan angka yang tepat, jalankan `whisper-cli.exe` pada file apa pun sekali dan baca log startup-nya: ia mencetak `ggml_vulkan: 0 = <nama>`, `ggml_vulkan: 1 = <nama>`. Gunakan indeks yang mencantumkan kartu target Anda. `check_config` menggemakan perangkat aktif sehingga Anda dapat memastikan penyematan berhasil.
+
 ### VRAM dilaporkan setengah ukuran sebenarnya (AMD)
 
 Ini adalah keanehan pelaporan Windows yang diketahui untuk GPU AMD dengan memori terpadu/berbagi. VRAM yang sebenarnya tersedia untuk pemrosesan biasanya dua kali lipat dari yang dilaporkan `wmic`. Rekomendasi model mungkin terlalu konservatif akibatnya — Anda bisa mencoba model yang lebih besar dari yang direkomendasikan dan mengamati apakah transkripsi berhasil diselesaikan.
@@ -172,6 +182,12 @@ Catatan: ini tidak berpengaruh saat mode privasi aktif.
 ---
 
 ## Transkripsi Latar Belakang dan Batch
+
+### "File ini berdurasi ~X — jalankan di latar belakang" / transkripsi latar depan kehabisan waktu
+
+Claude Desktop memberlakukan batas waktu ~4 menit pada setiap panggilan alat MCP tunggal. File panjang yang ditranskrip dalam mode **latar depan** (pemblokiran) dapat melampauinya — transkrip tetap selesai dan ditulis ke disk, tetapi panggilan alatnya sendiri mengalami error. Untuk mencegah kegagalan diam-diam itu, `transcribe_audio` dan `generate_subtitles` memperkirakan waktu jalan di awal dan, jika kemungkinan akan melewati batas, mengembalikan pesan yang memberi tahu Anda untuk menjalankan ulang dengan `background=true`. Mode latar belakang mengembalikan ID tugas segera dan tidak memiliki batas seperti itu — pantau dengan `check_progress`.
+
+Sebagian besar waktu nyata transkripsi adalah **pemuatan model**, bukan transkripsi: whisper-cli memuat ulang model pada setiap pemanggilan, dan model besar (mis. `large-v3`, 2,9 GB) pada GPU dengan memori terbatas dapat memakan waktu ~2 menit untuk dimuat sebelum transkripsi bahkan dimulai (model yang lebih kecil atau terkuantisasi memuat lebih cepat). Ambang batas pelindung dapat dikonfigurasi dengan `WHISPER_FOREGROUND_MAX_SEC` (detik; default 210).
 
 ### Tugas latar belakang tidak pernah menampilkan selesai
 

@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Roadmap
 
-Versão atual: **v2.3.0**
+Versão atual: **v2.4.0**
 
 ---
 
@@ -118,9 +118,33 @@ Arquitetura de processo desanexado: `transcribe_audio` com `background=true` cri
 - Campo `privacyMode: boolean` adicionado à interface `BatchState`.
 - O tipo `BackgroundFormat` exclui `json` (json no modo em segundo plano não é suportado — cai de volta para `text`).
 
+### ✅ v2.4.0 — Fortalecimento, guarda de tempo limite em primeiro plano, suíte de testes e CI
+
+Uma passagem de segurança/robustez; a migração para Bun planejada foi movida para v2.5.0.
+
+**Segurança e correção:**
+- Correção de contenção de caminho em `switch_model` — um diretório com prefixo-irmão (p. ex. `…\models-evil`) podia antes satisfazer a verificação de "dentro do diretório de modelos" por meio de um `startsWith` ingênuo; substituído por contenção normalizada baseada em `relative()`. Fecha a fuga que o SECURITY.md descreve.
+- Barreira de privacidade/consentimento chaveada **por operação** (ferramenta + argumentos) — confirmar uma transcrição não pode mais satisfazer a barreira de uma operação diferente.
+- `download_model` rejeita downloads truncados (verificação de Content-Length) antes de promover um arquivo `.part`. (A verificação completa do digest SHA256 fica para uma passagem posterior.)
+- Coerção de entrada — parâmetros numéricos de ferramentas que não são números reais são descartados em vez de entregues ao whisper-cli como `NaN`.
+
+**Robustez:**
+- **Guarda de tempo limite em primeiro plano** — um arquivo longo o suficiente para exceder o tempo limite de ferramenta MCP de ~4 minutos do Claude Desktop em modo de bloqueio é detectado de antemão e roteado para segundo plano em vez de esgotar o tempo silenciosamente. Limite configurável via `WHISPER_FOREGROUND_MAX_SEC`. Estimativas de tempo corrigidas (a antiga estimativa de GPU subestimava muito; o custo dominante de recarga do modelo agora é modelado — medido, não adivinhado).
+- Gravações atômicas do estado de trabalhos/lotes (arquivo temporário + renomeação) para que um leitor concorrente não possa observar um arquivo JSON parcialmente escrito.
+- IDs de trabalho/lote/temporários à prova de colisão (com sufixo UUID).
+- Encerramento gracioso em SIGINT/SIGTERM que limpa os arquivos temporários do modo de bloqueio.
+
+**Seleção de dispositivo GPU:**
+- Variável de ambiente `WHISPER_GPU_DEVICE`, e `gpu_device` agora propagado por `generate_subtitles` e pela passagem de detecção de idioma (antes apenas `transcribe_audio`). `check_config` reporta o dispositivo ativo. `check_system` não reporta mais erroneamente um problema de driver quando o `wmic` (descontinuado no Windows 11 24H2+) não retorna nada.
+
+**Qualidade:**
+- Uma suíte de testes unitários `node:test` sobre a lógica pura (contenção de caminho, chaveamento da barreira, gravações atômicas, coerção de entrada, a estimativa de tempo limite), zero dependências adicionadas, além de um fluxo de trabalho de CI do GitHub Actions executando-a a cada push/PR.
+
+**Identificado para um lançamento futuro:** um caminho de modelo persistente (p. ex. o `whisper-server` do whisper.cpp) para eliminar o custo de recarga do modelo pago em cada transcrição — um grande ganho de throughput para trabalho em lote/de arquivo.
+
 ---
 
-## Planejado — v2.4.0: Migração para Bun
+## Planejado — v2.5.0: Migração para Bun
 
 Migrar o runtime de Node.js para o [Bun](https://bun.sh).
 
@@ -140,13 +164,13 @@ O Claude Desktop cria um novo servidor MCP a cada início de sessão, portanto o
 
 ---
 
-## Planejado — v2.5.0: Formatos de saída aprimorados para integração com ferramentas externas
+## Planejado — v2.6.0: Formatos de saída aprimorados para integração com ferramentas externas
 
 Suporte expandido de formatos de saída voltado para fluxos de trabalho de análise e integração downstream. O escopo exato será definido com base no feedback dos usuários após o v2.3.0.
 
 ---
 
-## Planejado — v2.6.0: Modo de transcrição de microfone ao vivo
+## Planejado — v2.7.0: Modo de transcrição de microfone ao vivo
 
 Transcrição em tempo real a partir de entrada de microfone ao vivo. Transmite áudio em fragmentos do dispositivo de gravação selecionado para o whisper, retornando segmentos de transcrição concluídos de forma contínua.
 

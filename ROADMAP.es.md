@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Hoja de Ruta
 
-Versión actual: **v2.3.0**
+Versión actual: **v2.4.0**
 
 ---
 
@@ -118,9 +118,33 @@ Arquitectura de proceso desconectado: `transcribe_audio` con `background=true` c
 - Campo `privacyMode: boolean` añadido a la interfaz `BatchState`.
 - El tipo `BackgroundFormat` excluye `json` (json en modo en segundo plano no está soportado — cae de vuelta a `text`).
 
+### ✅ v2.4.0 — Fortalecimiento, guarda de tiempo de espera en primer plano, conjunto de pruebas y CI
+
+Una pasada de seguridad/robustez; la migración a Bun planificada se trasladó a v2.5.0.
+
+**Seguridad y corrección:**
+- Corrección de contención de rutas en `switch_model` — un directorio con prefijo hermano (p. ej. `…\models-evil`) antes podía satisfacer la comprobación de "dentro del directorio de modelos" mediante un `startsWith` ingenuo; reemplazado por contención normalizada basada en `relative()`. Cierra la fuga que describe SECURITY.md.
+- Barrera de privacidad/consentimiento vinculada **por operación** (herramienta + argumentos) — confirmar una transcripción ya no puede satisfacer la barrera de una operación diferente.
+- `download_model` rechaza descargas truncadas (comprobación de Content-Length) antes de promover un archivo `.part`. (La verificación completa del resumen SHA256 queda pendiente para una pasada posterior.)
+- Coerción de entrada — los parámetros numéricos de herramientas que no son números reales se descartan en lugar de entregarse a whisper-cli como `NaN`.
+
+**Robustez:**
+- **Guarda de tiempo de espera en primer plano** — un archivo lo bastante largo como para superar el tiempo de espera de herramienta MCP de ~4 minutos de Claude Desktop en modo bloqueante se detecta de antemano y se enruta a segundo plano en lugar de agotar el tiempo silenciosamente. Umbral configurable mediante `WHISPER_FOREGROUND_MAX_SEC`. Estimaciones de tiempo corregidas (la antigua estimación de GPU subestimaba notablemente; ahora se modela el coste dominante de recarga del modelo — medido, no adivinado).
+- Escrituras atómicas del estado de trabajos/lotes (archivo temporal + renombrado) para que un lector concurrente no pueda observar un archivo JSON a medio escribir.
+- IDs de trabajo/lote/temporales a prueba de colisiones (con sufijo UUID).
+- Apagado controlado ante SIGINT/SIGTERM que limpia los archivos temporales del modo bloqueante.
+
+**Selección de dispositivo GPU:**
+- Variable de entorno `WHISPER_GPU_DEVICE`, y `gpu_device` ahora propagado a través de `generate_subtitles` y la pasada de detección de idioma (antes solo `transcribe_audio`). `check_config` informa el dispositivo activo. `check_system` ya no informa erróneamente un problema de controlador cuando `wmic` (obsoleto en Windows 11 24H2+) no devuelve nada.
+
+**Calidad:**
+- Un conjunto de pruebas unitarias con `node:test` sobre la lógica pura (contención de rutas, clave de barrera, escrituras atómicas, coerción de entrada, la estimación de tiempo de espera), cero dependencias añadidas, además de un flujo de trabajo de CI de GitHub Actions que lo ejecuta en cada push/PR.
+
+**Identificado para una versión futura:** una ruta de modelo persistente (p. ej. `whisper-server` de whisper.cpp) para eliminar el coste de recarga del modelo que se paga en cada transcripción — una gran mejora de rendimiento para trabajo por lotes/de archivo.
+
 ---
 
-## Planificado — v2.4.0: Migración a Bun
+## Planificado — v2.5.0: Migración a Bun
 
 Migrar el runtime de Node.js a [Bun](https://bun.sh).
 
@@ -140,13 +164,13 @@ Claude Desktop crea un nuevo servidor MCP en cada inicio de sesión, por lo que 
 
 ---
 
-## Planificado — v2.5.0: Formatos de salida mejorados para integración con herramientas externas
+## Planificado — v2.6.0: Formatos de salida mejorados para integración con herramientas externas
 
 Soporte ampliado de formatos de salida orientado a flujos de trabajo de análisis e integración downstream. El alcance exacto se definirá basándose en los comentarios de usuarios tras v2.3.0.
 
 ---
 
-## Planificado — v2.6.0: Modo de transcripción de micrófono en vivo
+## Planificado — v2.7.0: Modo de transcripción de micrófono en vivo
 
 Transcripción en tiempo real desde entrada de micrófono en vivo. Transmite audio en fragmentos desde el dispositivo de grabación seleccionado a whisper, devolviendo segmentos de transcripción completados de forma continua.
 

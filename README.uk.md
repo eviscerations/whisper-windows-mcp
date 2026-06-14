@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Нативний MCP-сервер (Model Context Protocol) для Windows. Використовує [whisper.cpp](https://github.com/ggml-org/whisper.cpp) для транскрибування аудіо та відеофайлів локально в Claude Desktop — з апаратним прискоренням GPU, підтримкою багатьох мов і пакетним опрацюванням. Уся транскрипція виконується локально — жодні аудіо-, відеофайли чи шляхи до файлів не передаються назовні.
 
 > **Чому існує цей пакет?**
@@ -375,6 +379,8 @@ whisper-windows-mcp містить вбудовану архітектуру к�
 | `WHISPER_CLI_PATH` | Шлях до whisper-cli.exe (обов'язково) |
 | `WHISPER_MODEL` | Шлях до файлу моделі .bin (обов'язково) |
 | `WHISPER_THREADS` | Перевизначити кількість потоків CPU |
+| `WHISPER_GPU_DEVICE` | Індекс пристрою Vulkan, до якого прив'язати транскрипцію, для систем із кількома GPU (індекс перелічення Vulkan — перевірте журнал запуску whisper-cli; не порядок GPU у Windows). Можна перевизначити для окремого виклику через `gpu_device`. Дивіться [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Межа транскрипції на передньому плані в секундах (типово 210). Файли, виконання яких оцінюється як довше, спрямовуються у фоновий режим замість ризику ~4-хвилинного тайм-ауту інструмента Claude Desktop. |
 | `FFMPEG_PATH` | Шлях до ffmpeg, якщо його немає в системному PATH |
 | `WHISPER_PRIVACY_MODE` | При значенні `true` всі відповіді інструментів повертають лише метадані — жоден текст транскрипції не передається Claude. Для регульованого або конфіденційного контенту. Може бути перевизначено для окремого виклику через параметр `privacy_mode`. Дивіться [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | При значенні `true` пропускає одноразове розкриття згоди сеансу перед поверненням тексту транскрипції. Встановіть після ознайомлення з межами конфіденційності, коли нагадування більше не потрібне. Не має ефекту, коли режим конфіденційності активний. |

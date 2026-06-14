@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Foaie de parcurs
 
-Versiunea curentă: **v2.3.0**
+Versiunea curentă: **v2.4.0**
 
 ---
 
@@ -114,9 +114,33 @@ Arhitectură proces detașat: `transcribe_audio` cu `background=true` pornește 
 - `check_config` raportează acum starea modului de confidențialitate.
 - Jurnalul de pornire raportează modul de confidențialitate activat/dezactivat.
 
+### ✅ v2.4.0 — Întărire, gardă de expirare în prim-plan, suită de teste și CI
+
+O trecere de securitate/robustețe; migrarea la Bun planificată a fost mutată la v2.5.0.
+
+**Securitate și corectitudine:**
+- Remediere a izolării căilor în `switch_model` — un director cu prefix-frate (de ex. `…\models-evil`) putea anterior satisface verificarea „în interiorul directorului de modele” printr-un `startsWith` naiv; înlocuit cu izolare normalizată bazată pe `relative()`. Închide evadarea pe care o descrie SECURITY.md.
+- Bariera de confidențialitate/consimțământ cheiată **per operațiune** (instrument + argumente) — confirmarea unei transcrieri nu mai poate satisface bariera unei alte operațiuni.
+- `download_model` respinge descărcările trunchiate (verificare Content-Length) înainte de a promova un fișier `.part`. (Verificarea completă a digestului SHA256 este urmărită pentru o trecere ulterioară.)
+- Coerciția intrărilor — parametrii numerici de instrument care nu sunt numere reale sunt eliminați în loc să fie predați lui whisper-cli ca `NaN`.
+
+**Robustețe:**
+- **Gardă de expirare în prim-plan** — un fișier suficient de lung încât să depășească expirarea de ~4 minute a instrumentului MCP al Claude Desktop în mod blocant este detectat din timp și direcționat în fundal în loc să expire în tăcere. Prag configurabil prin `WHISPER_FOREGROUND_MAX_SEC`. Estimările de timp corectate (vechea estimare GPU subestima grav; costul dominant de reîncărcare a modelului este acum modelat — măsurat, nu ghicit).
+- Scrieri atomice ale stării lucrărilor/loturilor (fișier temporar + redenumire) astfel încât un cititor concurent să nu poată observa un fișier JSON rupt.
+- ID-uri de lucrare/lot/temporare rezistente la coliziuni (cu sufix UUID).
+- Oprire grațioasă la SIGINT/SIGTERM care curăță fișierele temporare ale modului blocant.
+
+**Selectarea dispozitivului GPU:**
+- Variabila de mediu `WHISPER_GPU_DEVICE`, iar `gpu_device` este acum transmis prin `generate_subtitles` și prin trecerea de detectare a limbii (anterior doar `transcribe_audio`). `check_config` raportează dispozitivul activ. `check_system` nu mai raportează greșit o problemă de driver atunci când `wmic` (depreciat în Windows 11 24H2+) nu returnează nimic.
+
+**Calitate:**
+- O suită de teste unitare `node:test` peste logica pură (izolarea căilor, cheierea barierei, scrieri atomice, coerciția intrărilor, estimarea expirării), zero dependențe adăugate, plus un flux de lucru CI GitHub Actions care o rulează la fiecare push/PR.
+
+**Identificat pentru o versiune viitoare:** o cale de model persistentă (de ex. `whisper-server` din whisper.cpp) pentru a elimina costul de reîncărcare a modelului plătit la fiecare transcriere — un câștig mare de debit pentru lucrul în lot/de arhivă.
+
 ---
 
-## Planificat — v2.4.0: Migrare la Bun
+## Planificat — v2.5.0: Migrare la Bun
 
 Migrează runtime-ul de la Node.js la [Bun](https://bun.sh).
 
@@ -136,13 +160,13 @@ Deoarece Claude Desktop pornește serverul MCP din nou la fiecare pornire de ses
 
 ---
 
-## Planificat — v2.5.0: Formate de ieșire îmbunătățite pentru integrarea instrumentelor externe
+## Planificat — v2.6.0: Formate de ieșire îmbunătățite pentru integrarea instrumentelor externe
 
 Suport extins pentru formate de ieșire destinat fluxurilor de lucru de analiză și integrare din aval. Domeniul exact va fi definit pe baza feedback-ului utilizatorilor după v2.3.0.
 
 ---
 
-## Planificat — v2.6.0: Modul de transcriere live din microfon
+## Planificat — v2.7.0: Modul de transcriere live din microfon
 
 Transcriere în timp real din intrare microfon live. Transmite audio de la un dispozitiv de înregistrare selectat la whisper în bucăți, returnând segmente de transcriere continue pe măsură ce se finalizează.
 

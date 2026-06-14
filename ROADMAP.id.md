@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Peta Jalan
 
-Versi saat ini: **v2.3.0**
+Versi saat ini: **v2.4.0**
 
 ---
 
@@ -118,9 +118,33 @@ Arsitektur proses terpisah: `transcribe_audio` dengan `background=true` menelurk
 - Interface `BatchState` diperluas dengan field `privacyMode: boolean`.
 - Tipe `BackgroundFormat` mengecualikan `json` (json dalam mode latar belakang tetap tidak didukung — kembali ke `text`).
 
+### ✅ v2.4.0 — Penguatan, Pelindung Batas Waktu Latar Depan, Suite Pengujian & CI
+
+Sebuah pas keamanan/ketangguhan; migrasi Bun yang direncanakan dipindahkan ke v2.5.0.
+
+**Keamanan & kebenaran:**
+- Perbaikan kontainmen jalur `switch_model` — direktori berprefiks saudara (mis. `…\models-evil`) sebelumnya dapat memenuhi pemeriksaan "di dalam direktori model" melalui `startsWith` yang naif; diganti dengan kontainmen ternormalisasi berbasis `relative()`. Menutup celah yang dijelaskan SECURITY.md.
+- Gerbang privasi/persetujuan dikunci **per operasi** (alat + argumen) — mengonfirmasi satu transkripsi tidak lagi dapat memenuhi gerbang operasi yang berbeda.
+- `download_model` menolak unduhan terpotong (pemeriksaan Content-Length) sebelum mempromosikan file `.part`. (Verifikasi penuh digest SHA256 dilacak untuk pas berikutnya.)
+- Koersi input — parameter alat numerik yang bukan angka asli dibuang alih-alih diserahkan ke whisper-cli sebagai `NaN`.
+
+**Ketangguhan:**
+- **Pelindung batas waktu latar depan** — file yang cukup panjang untuk melampaui batas waktu alat MCP ~4 menit milik Claude Desktop dalam mode pemblokiran dideteksi di awal dan dirutekan ke latar belakang alih-alih kehabisan waktu secara diam-diam. Ambang batas dapat dikonfigurasi melalui `WHISPER_FOREGROUND_MAX_SEC`. Estimasi waktu diperbaiki (estimasi GPU lama terlalu rendah; biaya pemuatan ulang model yang dominan kini dimodelkan — diukur, bukan ditebak).
+- Penulisan status pekerjaan/batch atomik (file temp + rename) sehingga pembaca konkuren tidak dapat melihat file JSON yang robek.
+- ID pekerjaan/batch/temp anti-tabrakan (bersufiks UUID).
+- Penghentian SIGINT/SIGTERM yang anggun yang membersihkan file temp mode pemblokiran.
+
+**Pemilihan perangkat GPU:**
+- Variabel lingkungan `WHISPER_GPU_DEVICE`, dan `gpu_device` kini disalurkan melalui `generate_subtitles` dan pas deteksi bahasa (sebelumnya hanya `transcribe_audio`). `check_config` melaporkan perangkat aktif. `check_system` tidak lagi salah melaporkan masalah driver ketika `wmic` (usang di Windows 11 24H2+) tidak mengembalikan apa pun.
+
+**Kualitas:**
+- Suite pengujian unit `node:test` atas logika murni (kontainmen jalur, penguncian gerbang, penulisan atomik, koersi input, estimasi batas waktu), nol dependensi tambahan, ditambah alur kerja CI GitHub Actions yang menjalankannya pada setiap push/PR.
+
+**Diidentifikasi untuk rilis mendatang:** jalur model persisten (mis. `whisper-server` milik whisper.cpp) untuk menghilangkan biaya pemuatan ulang model yang dibayar pada setiap transkripsi — peningkatan throughput besar untuk pekerjaan batch/arsip.
+
 ---
 
-## Direncanakan — v2.4.0: Migrasi Bun
+## Direncanakan — v2.5.0: Migrasi Bun
 
 Migrasikan runtime dari Node.js ke [Bun](https://bun.sh).
 
@@ -140,13 +164,13 @@ Karena Claude Desktop menelurkan server MCP baru setiap kali sesi dimulai, waktu
 
 ---
 
-## Direncanakan — v2.5.0: Format Output Lanjutan untuk Integrasi Alat Eksternal
+## Direncanakan — v2.6.0: Format Output Lanjutan untuk Integrasi Alat Eksternal
 
 Dukungan format output lanjutan yang ditargetkan untuk analisis downstream dan alur kerja integrasi. Cakupan tepat akan ditentukan berdasarkan umpan balik pengguna pasca-v2.3.0.
 
 ---
 
-## Direncanakan — v2.6.0: Mode Transkripsi Mikrofon Langsung
+## Direncanakan — v2.7.0: Mode Transkripsi Mikrofon Langsung
 
 Transkripsi real-time dari input mikrofon langsung. Streaming audio dari perangkat rekaman yang dipilih ke whisper dalam potongan, mengembalikan segmen transkrip bergulir saat selesai.
 

@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Plan rozwoju
 
-Aktualna wersja: **v2.3.0**
+Aktualna wersja: **v2.4.0**
 
 ---
 
@@ -114,9 +114,33 @@ Architektura odłączonego procesu: `transcribe_audio` z `background=true` uruch
 - `check_config` teraz raportuje status trybu prywatności.
 - Dziennik startowy raportuje włączenie/wyłączenie trybu prywatności.
 
+### ✅ v2.4.0 — Wzmocnienie, strażnik limitu czasu pierwszego planu, zestaw testów i CI
+
+Przegląd pod kątem bezpieczeństwa/odporności; planowana migracja do Bun została przeniesiona na v2.5.0.
+
+**Bezpieczeństwo i poprawność:**
+- Poprawka ograniczenia ścieżek w `switch_model` — katalog z prefiksem-rodzeństwem (np. `…\models-evil`) mógł wcześniej spełnić sprawdzenie „wewnątrz katalogu modeli” poprzez naiwne `startsWith`; zastąpione znormalizowanym ograniczeniem opartym na `relative()`. Zamyka lukę opisaną w SECURITY.md.
+- Bramka prywatności/zgody kluczowana **per operacja** (narzędzie + argumenty) — potwierdzenie jednej transkrypcji nie może już spełnić bramki innej operacji.
+- `download_model` odrzuca obcięte pobrania (sprawdzenie Content-Length) przed promowaniem pliku `.part`. (Pełna weryfikacja skrótu SHA256 zaplanowana na późniejszy przegląd.)
+- Koercja danych wejściowych — numeryczne parametry narzędzi, które nie są prawdziwymi liczbami, są odrzucane zamiast przekazywane do whisper-cli jako `NaN`.
+
+**Odporność:**
+- **Strażnik limitu czasu pierwszego planu** — plik na tyle długi, by przekroczyć ~4-minutowy limit czasu narzędzia MCP Claude Desktop w trybie blokującym, jest wykrywany z góry i kierowany do tła zamiast po cichu przekraczać limit czasu. Próg konfigurowalny przez `WHISPER_FOREGROUND_MAX_SEC`. Skorygowano szacunki czasu (stary szacunek GPU mocno zaniżał; dominujący koszt ponownego ładowania modelu jest teraz modelowany — zmierzony, nie zgadywany).
+- Atomowe zapisy stanu zadań/partii (plik tymczasowy + zmiana nazwy), aby równoległy czytelnik nie mógł zobaczyć rozdartego pliku JSON.
+- Odporne na kolizje identyfikatory zadań/partii/tymczasowe (z sufiksem UUID).
+- Łagodne zamknięcie przy SIGINT/SIGTERM, które czyści pliki tymczasowe trybu blokującego.
+
+**Wybór urządzenia GPU:**
+- Zmienna środowiskowa `WHISPER_GPU_DEVICE` oraz `gpu_device` są teraz przekazywane przez `generate_subtitles` i przebieg wykrywania języka (wcześniej tylko `transcribe_audio`). `check_config` raportuje aktywne urządzenie. `check_system` nie raportuje już błędnie problemu ze sterownikiem, gdy `wmic` (przestarzałe w Windows 11 24H2+) nic nie zwraca.
+
+**Jakość:**
+- Zestaw testów jednostkowych `node:test` obejmujący czystą logikę (ograniczenie ścieżek, kluczowanie bramki, zapisy atomowe, koercja danych wejściowych, szacowanie limitu czasu), zero dodatkowych zależności, plus przepływ pracy CI GitHub Actions uruchamiający go przy każdym push/PR.
+
+**Zidentyfikowane do przyszłego wydania:** trwała ścieżka modelu (np. `whisper-server` z whisper.cpp), aby wyeliminować koszt ponownego ładowania modelu ponoszony przy każdej transkrypcji — duży zysk przepustowości dla pracy wsadowej/archiwalnej.
+
 ---
 
-## Planowane — v2.4.0: Migracja do Bun
+## Planowane — v2.5.0: Migracja do Bun
 
 Migracja środowiska uruchomieniowego z Node.js do [Bun](https://bun.sh).
 
@@ -136,13 +160,13 @@ Ponieważ Claude Desktop uruchamia serwer MCP na nowo przy każdym starcie sesji
 
 ---
 
-## Planowane — v2.5.0: Rozszerzone formaty wyjściowe dla integracji zewnętrznych narzędzi
+## Planowane — v2.6.0: Rozszerzone formaty wyjściowe dla integracji zewnętrznych narzędzi
 
 Rozszerzona obsługa formatów wyjściowych skierowana na przepływy pracy analizy i integracji. Dokładny zakres zostanie określony na podstawie opinii użytkowników po v2.3.0.
 
 ---
 
-## Planowane — v2.6.0: Tryb transkrypcji na żywo z mikrofonu
+## Planowane — v2.7.0: Tryb transkrypcji na żywo z mikrofonu
 
 Transkrypcja w czasie rzeczywistym z wejścia mikrofonu na żywo. Strumieniowanie audio z wybranego urządzenia nagrywającego do whisper w fragmentach, zwracając kolejne segmenty transkrypcji w miarę ich ukończenia.
 

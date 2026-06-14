@@ -132,6 +132,12 @@ Sau đó phiên âm tệp WAV trực tiếp.
 
 ---
 
+## "Tệp này dài ~X — hãy chạy nó ở chế độ nền" / phiên âm tiền cảnh hết thời gian chờ
+
+Claude Desktop áp đặt thời gian chờ ~4 phút cho bất kỳ lệnh gọi công cụ MCP đơn lẻ nào. Một tệp dài được phiên âm ở chế độ **tiền cảnh** (chặn) có thể vượt quá nó — bản phiên âm vẫn hoàn tất và được ghi ra đĩa, nhưng bản thân lệnh gọi công cụ lại báo lỗi. Để ngăn lỗi âm thầm đó, `transcribe_audio` và `generate_subtitles` ước tính thời gian chạy trước và, nếu có khả năng vượt trần, trả về một thông báo yêu cầu bạn chạy lại với `background=true`. Chế độ nền trả về ID công việc ngay lập tức và không có giới hạn như vậy — theo dõi nó bằng `check_progress`.
+
+Phần lớn thời gian thực tế của một lượt phiên âm là **tải mô hình**, không phải phiên âm: whisper-cli tải lại mô hình ở mỗi lần gọi, và một mô hình lớn (ví dụ `large-v3`, 2,9 GB) trên GPU bị hạn chế bộ nhớ có thể mất ~2 phút để tải trước khi phiên âm bắt đầu (mô hình nhỏ hơn hoặc đã lượng tử hóa tải nhanh hơn). Ngưỡng của bộ bảo vệ có thể cấu hình bằng `WHISPER_FOREGROUND_MAX_SEC` (giây; mặc định 210).
+
 ## Tác vụ nền thất bại với tên tệp chứa ký tự đặc biệt hoặc Unicode
 
 **Nguyên nhân:** whisper-cli.exe không thể ghi tệp đầu ra khi đường dẫn chứa ký tự Unicode (tiếng Việt, tiếng Nhật, tiếng Hàn, emoji, dấu ngoặc, v.v.) hoặc một số ký tự đặc biệt nhất định.
@@ -172,6 +178,16 @@ Xác nhận tăng tốc GPU đang hoạt động:
 - Theo dõi Task Manager → Hiệu suất → GPU trong quá trình phiên âm — mức sử dụng GPU sẽ tăng lên 15–30%
 
 ---
+
+## Phiên âm chạy trên GPU sai (hệ thống nhiều GPU)
+
+Theo mặc định, whisper-cli sử dụng thiết bị Vulkan 0. Trên máy nhiều GPU, đó có thể không phải là card bạn muốn. Ghim một thiết bị cụ thể bằng biến môi trường `WHISPER_GPU_DEVICE` (hoặc tham số `gpu_device` theo từng lệnh gọi, nay cũng hoạt động trên `generate_subtitles`):
+
+```json
+"env": { "WHISPER_GPU_DEVICE": "1" }
+```
+
+⚠️ **Chỉ số là thứ tự liệt kê của Vulkan, KHÔNG phải thứ tự "GPU 0 / GPU 1" của Windows** — chúng thường khác nhau. Để tìm đúng số, hãy chạy `whisper-cli.exe` trên bất kỳ tệp nào một lần và đọc nhật ký khởi động của nó: nó in ra `ggml_vulkan: 0 = <tên>`, `ggml_vulkan: 1 = <tên>`. Dùng chỉ số liệt kê card mục tiêu của bạn. `check_config` hiển thị thiết bị đang hoạt động để bạn xác nhận việc ghim đã có hiệu lực.
 
 ## `check_system` báo dung lượng VRAM sai
 

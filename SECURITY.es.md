@@ -53,6 +53,18 @@ Usa el reporte privado de vulnerabilidades de GitHub:
 
 Recibirás una respuesta en 7 días. Si la vulnerabilidad es confirmada, se lanzará una corrección lo antes posible y serás acreditado en las notas de release si lo deseas.
 
+## Sandbox y aprobaciones
+
+whisper-windows-mcp es una **herramienta local, de un solo usuario, controlada por el propietario de la máquina a través de Claude Desktop.** Su modelo de amenazas es el propietario ejecutándola en su propia máquina — no una implementación no confiable, multiinquilino o expuesta a la red.
+
+- **Sandbox:** ninguno, por diseño. `whisper-cli.exe` se ejecuta con el propio nivel de permisos del propietario, igual que cualquier servidor MCP local. El aislamiento a nivel de SO no es la mitigación aquí; el ámbito de uso lo es — **no expongas este servidor a acceso de red no confiable** (consulta "Inyección de ruta de archivo" más abajo).
+- **Las aprobaciones son por capas, no basadas en sandbox:**
+  1. **Aprobación del host** — la capa MCP de Claude Desktop controla la invocación de herramientas.
+  2. **Barreras de consentimiento / privacidad** — se requiere una confirmación explícita antes de que cualquier texto de transcripción salga de la máquina hacia la API de Claude; `WHISPER_PRIVACY_MODE` / `privacy_mode` por llamada devuelve solo metadatos para contenido regulado. La barrera está vinculada por operación (herramienta + argumentos). Ver [PRIVACY.md](PRIVACY.md).
+  3. **Validación de entrada** — las rutas con recorrido de directorios y UNC son rechazadas; `switch_model` está contenido al directorio de modelos configurado; `download_model` está restringido a una lista de permitidos de espacios de nombres de Hugging Face de confianza.
+
+Esta herramienta **no** está diseñada para ser controlada por un agente no confiable ni para ejecutarse como infraestructura compartida. Esa postura requeriría sandbox de SO/contenedor y una política de egreso — fuera del alcance de una herramienta de transcripción local de un solo usuario.
+
 ## Decisiones de diseño conocidas
 
 - **Inyección de ruta de archivo:** Las herramientas aceptan rutas de archivo absolutas de Claude. Esto es por diseño — la herramienta está destinada a ser usada con Claude Desktop por el propietario de la máquina. No expongas este servidor MCP a acceso de red no confiable.
@@ -60,5 +72,5 @@ Recibirás una respuesta en 7 días. Si la vulnerabilidad es confirmada, se lanz
 - **Archivos temporales:** Los archivos WAV intermedios se escriben en `%TEMP%\whisper_tmp_*.wav` y se eliminan tras la transcripción. Los archivos de estado de tareas se escriben en `%TEMP%\whisper-mcp-jobs\` y se limpian automáticamente después de 7 días al iniciar el servidor.
 - **Contenido de transcripción:** El texto de transcripción devuelto en respuestas de herramientas es procesado por la API de Claude en modo estándar. Para evitar esto, activa `WHISPER_PRIVACY_MODE=true` o pasa `privacy_mode=true` por llamada. Ver [PRIVACY.md](PRIVACY.md).
 - **Inyección de transcripción:** Los archivos de audio pueden contener contenido hablado que, cuando se transcribe, se asemeja a instrucciones. Las defensas integradas de Claude manejan esto. El propio servidor MCP marca todo el contenido de transcripción como datos no confiables y nunca lo interpreta como instrucciones.
-- **Las descargas de modelos están restringidas:** La herramienta `download_model` solo descarga desde dos espacios de nombres de Hugging Face de confianza (`ggerganov/whisper.cpp` y `ggml-org`). Los redireccionamientos son validados contra una lista de permitidos antes de seguirlos. Las URLs arbitrarias son rechazadas a nivel de código.
-- **El cambio de modelos está en sandbox:** `switch_model` solo acepta archivos `.bin` dentro del directorio de modelos configurado. Las rutas fuera de ese directorio son rechazadas independientemente de cómo se especifiquen.
+- **Las descargas de modelos están restringidas:** La herramienta `download_model` solo descarga desde dos espacios de nombres de Hugging Face de confianza (`ggerganov/whisper.cpp` y `ggml-org`). Los redireccionamientos son validados contra una lista de permitidos antes de seguirlos. Las URLs arbitrarias son rechazadas a nivel de código. Las descargas truncadas o incompletas se rechazan (comprobación de Content-Length) antes de que un archivo `.part` se promueva al nombre del modelo.
+- **El cambio de modelos está en sandbox:** `switch_model` solo acepta archivos `.bin` dentro del directorio de modelos configurado. Las rutas fuera de él se rechazan mediante contención de rutas normalizada — un directorio con prefijo hermano como `…\models-evil` no puede satisfacer la comprobación — independientemente de cómo se especifique la ruta.

@@ -78,6 +78,16 @@ vulkaninfo
 
 Orice ieșire confirmă disponibilitatea Vulkan. Dacă `vulkaninfo` nu funcționează, instalează cel mai recent driver GPU de pe site-ul producătorului.
 
+### Transcrierea rulează pe GPU-ul greșit (sisteme cu mai multe GPU-uri)
+
+În mod implicit, whisper-cli folosește dispozitivul Vulkan 0. Pe o mașină cu mai multe GPU-uri, este posibil să nu fie placa pe care o dorești. Fixează un anumit dispozitiv cu variabila de mediu `WHISPER_GPU_DEVICE` (sau parametrul `gpu_device` per apel, care acum funcționează și pe `generate_subtitles`):
+
+```json
+"env": { "WHISPER_GPU_DEVICE": "1" }
+```
+
+⚠️ **Indexul este ordinea de enumerare Vulkan, NU ordinea „GPU 0 / GPU 1" din Windows** — adesea diferă. Pentru a găsi numărul corect, rulează `whisper-cli.exe` pe orice fișier o dată și citește jurnalul său de pornire: tipărește `ggml_vulkan: 0 = <nume>`, `ggml_vulkan: 1 = <nume>`. Folosește indexul care listează placa țintă. `check_config` afișează dispozitivul activ, astfel încât poți confirma că fixarea a avut efect.
+
 ### VRAM raportat ca jumătate din dimensiunea reală (AMD)
 
 Aceasta este o nuanță de raportare Windows pentru GPU-uri AMD. VRAM-ul real disponibil pentru procesare este de obicei de două ori mai mare decât ceea ce raportează `wmic`. Recomandarea modelului poate fi excesiv de conservatoare — poți încerca un model mai mare decât cel recomandat.
@@ -153,6 +163,12 @@ Notă: nu are efect când modul de confidențialitate este activ.
 ---
 
 ## Transcriere în fundal și lot
+
+### "Acest fișier durează ~X — rulează-l în fundal" / transcrierea în prim-plan expiră
+
+Claude Desktop impune o expirare de ~4 minute pentru orice apel individual al unui instrument MCP. Un fișier lung transcris în mod **prim-plan** (blocant) îl poate depăși — transcrierea tot se finalizează și este scrisă pe disc, dar apelul instrumentului în sine eșuează. Pentru a preveni acea eșuare tăcută, `transcribe_audio` și `generate_subtitles` estimează timpul de rulare din timp și, dacă ar trece probabil de plafon, returnează un mesaj care îți spune să rulezi din nou cu `background=true`. Modul în fundal returnează imediat un ID de sarcină și nu are o astfel de limită — monitorizează-l cu `check_progress`.
+
+O mare parte din timpul real al unei transcrieri este **încărcarea modelului**, nu transcrierea: whisper-cli reîncarcă modelul la fiecare invocare, iar un model mare (de ex. `large-v3`, 2,9 GB) pe un GPU cu memorie limitată poate dura ~2 minute să se încarce înainte ca transcrierea să înceapă măcar (un model mai mic sau cuantizat se încarcă mai rapid). Pragul gărzii este configurabil cu `WHISPER_FOREGROUND_MAX_SEC` (secunde; implicit 210).
 
 ### Sarcina în fundal nu apare niciodată ca finalizată
 

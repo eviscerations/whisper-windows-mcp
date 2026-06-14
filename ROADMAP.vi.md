@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Lộ trình phát triển
 
-Phiên bản hiện tại: **v2.3.0**
+Phiên bản hiện tại: **v2.4.0**
 
 ---
 
@@ -118,9 +118,33 @@ Kiến trúc tiến trình tách rời: `transcribe_audio` với `background=tru
 - Trường `privacyMode: boolean` được thêm vào interface `BatchState`.
 - Kiểu `BackgroundFormat` loại trừ `json` (json trong chế độ nền không được hỗ trợ — dự phòng về `text`).
 
+### ✅ v2.4.0 — Tăng cường, bộ bảo vệ thời gian chờ tiền cảnh, bộ kiểm thử & CI
+
+Một lượt rà soát bảo mật/độ bền; việc chuyển đổi Bun đã lên kế hoạch được dời sang v2.5.0.
+
+**Bảo mật & tính đúng đắn:**
+- Sửa lỗi giới hạn đường dẫn của `switch_model` — một thư mục có tiền tố-anh em (ví dụ `…\models-evil`) trước đây có thể thỏa mãn kiểm tra "bên trong thư mục mô hình" thông qua `startsWith` ngây thơ; được thay bằng giới hạn chuẩn hóa dựa trên `relative()`. Đóng lỗ hổng thoát mà SECURITY.md mô tả.
+- Cổng quyền riêng tư/đồng ý được khóa **theo từng thao tác** (công cụ + đối số) — việc xác nhận một phiên âm không còn có thể thỏa mãn cổng của một thao tác khác.
+- `download_model` từ chối các lượt tải bị cắt cụt (kiểm tra Content-Length) trước khi thăng cấp tệp `.part`. (Việc xác minh đầy đủ digest SHA256 được theo dõi cho một lượt sau.)
+- Ép kiểu đầu vào — các tham số công cụ dạng số nhưng không phải số thực sự sẽ bị loại bỏ thay vì được chuyển cho whisper-cli dưới dạng `NaN`.
+
+**Độ bền:**
+- **Bộ bảo vệ thời gian chờ tiền cảnh** — một tệp đủ dài để vượt quá thời gian chờ công cụ MCP ~4 phút của Claude Desktop ở chế độ chặn được phát hiện trước và được định tuyến sang nền thay vì âm thầm hết thời gian chờ. Ngưỡng có thể cấu hình qua `WHISPER_FOREGROUND_MAX_SEC`. Ước tính thời gian đã được sửa (ước tính GPU cũ dự đoán thiếu nghiêm trọng; chi phí tải lại mô hình chiếm ưu thế nay đã được mô hình hóa — đo lường, không phải phỏng đoán).
+- Ghi trạng thái công việc/đợt theo kiểu nguyên tử (tệp tạm + đổi tên) để một trình đọc đồng thời không thể quan sát thấy tệp JSON bị rách.
+- ID công việc/đợt/tạm chống xung đột (có hậu tố UUID).
+- Tắt nhẹ nhàng khi nhận SIGINT/SIGTERM, dọn dẹp các tệp tạm của chế độ chặn.
+
+**Lựa chọn thiết bị GPU:**
+- Biến môi trường `WHISPER_GPU_DEVICE`, và `gpu_device` nay được truyền qua `generate_subtitles` và lượt phát hiện ngôn ngữ (trước đây chỉ `transcribe_audio`). `check_config` báo cáo thiết bị đang hoạt động. `check_system` không còn báo cáo sai sự cố trình điều khiển khi `wmic` (đã ngừng dùng trên Windows 11 24H2+) không trả về gì.
+
+**Chất lượng:**
+- Một bộ kiểm thử đơn vị `node:test` trên phần logic thuần túy (giới hạn đường dẫn, khóa cổng, ghi nguyên tử, ép kiểu đầu vào, ước tính thời gian chờ), không thêm phụ thuộc, cùng với quy trình CI GitHub Actions chạy nó trên mỗi push/PR.
+
+**Đã xác định cho bản phát hành tương lai:** một đường dẫn mô hình bền vững (ví dụ `whisper-server` của whisper.cpp) để loại bỏ chi phí tải lại mô hình phải trả ở mỗi lần phiên âm — một mức tăng thông lượng lớn cho công việc theo đợt/lưu trữ.
+
 ---
 
-## Đã lên kế hoạch — v2.4.0: Chuyển đổi Bun
+## Đã lên kế hoạch — v2.5.0: Chuyển đổi Bun
 
 Chuyển đổi runtime từ Node.js sang [Bun](https://bun.sh).
 
@@ -140,13 +164,13 @@ Claude Desktop tạo máy chủ MCP mới vào mỗi lần khởi động phiên
 
 ---
 
-## Đã lên kế hoạch — v2.5.0: Định dạng đầu ra nâng cao cho tích hợp công cụ bên ngoài
+## Đã lên kế hoạch — v2.6.0: Định dạng đầu ra nâng cao cho tích hợp công cụ bên ngoài
 
 Hỗ trợ định dạng đầu ra mở rộng nhắm đến quy trình phân tích và tích hợp downstream. Phạm vi chính xác sẽ được xác định dựa trên phản hồi của người dùng sau v2.3.0.
 
 ---
 
-## Đã lên kế hoạch — v2.6.0: Chế độ phiên âm microphone trực tiếp
+## Đã lên kế hoạch — v2.7.0: Chế độ phiên âm microphone trực tiếp
 
 Phiên âm theo thời gian thực từ đầu vào microphone trực tiếp. Phát trực tuyến âm thanh theo từng đoạn từ thiết bị ghi âm được chọn đến whisper, trả về các đoạn phiên âm đã hoàn thành theo cách cuộn.
 

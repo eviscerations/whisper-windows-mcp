@@ -53,6 +53,18 @@ Use o relatório privado de vulnerabilidade do GitHub:
 
 Você receberá uma resposta em até 7 dias. Se a vulnerabilidade for confirmada, uma correção será lançada o mais rápido possível e você será creditado nas notas de release se desejar.
 
+## Sandbox e aprovações
+
+whisper-windows-mcp é uma **ferramenta local, de usuário único, controlada pelo proprietário da máquina por meio do Claude Desktop.** Seu modelo de ameaças é o proprietário executando-a na própria máquina — não uma implantação não confiável, multilocatária ou exposta à rede.
+
+- **Sandbox:** nenhum, por design. O `whisper-cli.exe` é executado no nível de permissão do próprio proprietário, igual a qualquer servidor MCP local. O isolamento em nível de SO não é a mitigação aqui; o escopo de uso é — **não exponha este servidor a acesso de rede não confiável** (veja "Injeção de caminho de arquivo" abaixo).
+- **As aprovações são em camadas, não baseadas em sandbox:**
+  1. **Aprovação do host** — a camada MCP do Claude Desktop controla a invocação de ferramentas.
+  2. **Barreiras de consentimento / privacidade** — uma confirmação explícita é necessária antes que qualquer texto de transcrição saia da máquina para a API do Claude; `WHISPER_PRIVACY_MODE` / `privacy_mode` por chamada retorna apenas metadados para conteúdo regulamentado. A barreira é chaveada por operação (ferramenta + argumentos). Veja [PRIVACY.md](PRIVACY.md).
+  3. **Validação de entrada** — caminhos de travessia de diretório e UNC são rejeitados; `switch_model` é contido ao diretório de modelos configurado; `download_model` é restrito a uma lista de permissões de namespaces confiáveis do Hugging Face.
+
+Esta ferramenta **não** foi projetada para ser controlada por um agente não confiável nem executada como infraestrutura compartilhada. Essa postura exigiria sandbox de SO/contêiner e uma política de egresso — fora do escopo de uma ferramenta de transcrição local de usuário único.
+
 ## Decisões de design conhecidas
 
 - **Injeção de caminho de arquivo:** As ferramentas aceitam caminhos absolutos de arquivo do Claude. Isso é por design — a ferramenta é destinada a ser usada com o Claude Desktop pelo proprietário da máquina. Não exponha este servidor MCP a acesso de rede não confiável.
@@ -60,5 +72,5 @@ Você receberá uma resposta em até 7 dias. Se a vulnerabilidade for confirmada
 - **Arquivos temporários:** Arquivos WAV intermediários são gravados em `%TEMP%\whisper_tmp_*.wav` e excluídos após a transcrição. Arquivos de estado de tarefas são gravados em `%TEMP%\whisper-mcp-jobs\` e são limpos automaticamente após 7 dias na inicialização do servidor.
 - **Conteúdo de transcrição:** O texto de transcrição retornado nas respostas das ferramentas é processado pela API do Claude no modo padrão. Para evitar isso, ative `WHISPER_PRIVACY_MODE=true` ou passe `privacy_mode=true` por chamada. Veja [PRIVACY.md](PRIVACY.md).
 - **Injeção de transcrição:** Arquivos de áudio podem conter conteúdo falado que, quando transcrito, se assemelha a instruções. As defesas integradas do Claude lidam com isso. O próprio servidor MCP marca todo o conteúdo de transcrição como dados não confiáveis e nunca o interpreta como instruções.
-- **Downloads de modelos são restritos:** A ferramenta `download_model` só faz download de dois namespaces do Hugging Face confiáveis (`ggerganov/whisper.cpp` e `ggml-org`). Redirecionamentos são validados contra uma lista de permissões antes de serem seguidos. URLs arbitrários são rejeitados no nível do código.
-- **A troca de modelos é sandboxed:** `switch_model` só aceita arquivos `.bin` dentro do diretório de modelos configurado. Caminhos fora desse diretório são rejeitados independentemente de como são especificados.
+- **Downloads de modelos são restritos:** A ferramenta `download_model` só faz download de dois namespaces do Hugging Face confiáveis (`ggerganov/whisper.cpp` e `ggml-org`). Redirecionamentos são validados contra uma lista de permissões antes de serem seguidos. URLs arbitrários são rejeitados no nível do código. Downloads truncados/incompletos são rejeitados (verificação de Content-Length) antes de um arquivo `.part` ser promovido ao nome do modelo.
+- **A troca de modelos é sandboxed:** `switch_model` só aceita arquivos `.bin` dentro do diretório de modelos configurado. Caminhos fora dele são rejeitados via contenção de caminho normalizada — um diretório com prefixo-irmão como `…\models-evil` não pode satisfazer a verificação — independentemente de como o caminho é especificado.

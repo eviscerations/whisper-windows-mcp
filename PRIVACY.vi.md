@@ -89,6 +89,8 @@ Khi chế độ quyền riêng tư đang hoạt động, một xác nhận công
 
 Văn bản công khai giống nhau mỗi lần theo thiết kế. Sự lặp lại mới là điểm mấu chốt: nếu bạn đang xử lý nội dung nhạy cảm, bạn phải xác nhận rõ ràng từng thao tác.
 
+Xác nhận được gắn với **thao tác cụ thể** — công cụ cùng với các đối số chính xác của nó. Việc xác nhận một phiên âm không thể thỏa mãn cổng kiểm soát của một thao tác khác, và việc thay đổi bất kỳ tham số nào đều được coi là một thao tác mới cần xác nhận riêng.
+
 Đối với `start_batch` với chế độ quyền riêng tư: cần một xác nhận trước khi đợt bắt đầu. Tất cả tệp sau đó được xử lý không giám sát. Không có văn bản phiên âm nào được trả về ở bất kỳ thời điểm nào — chỉ có siêu dữ liệu tiến trình đợt.
 
 ---

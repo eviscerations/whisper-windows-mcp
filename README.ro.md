@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Server MCP (Model Context Protocol) nativ pentru Windows. Folosește [whisper.cpp](https://github.com/ggml-org/whisper.cpp) pentru transcrierea locală a fișierelor audio și video în Claude Desktop — cu accelerare GPU, suport multilingv și procesare în lot. Toată transcrierea se execută local — niciun fișier audio, video sau cale de fișier nu este trimis în exterior.
 
 > **De ce există acest pachet?**
@@ -375,6 +379,8 @@ Acest instrument a fost creat pentru a minimiza interacțiunile cu API-ul Claude
 | `WHISPER_CLI_PATH` | Calea către whisper-cli.exe (obligatoriu) |
 | `WHISPER_MODEL` | Calea către fișierul model .bin (obligatoriu) |
 | `WHISPER_THREADS` | Suprascrie numărul de fire CPU |
+| `WHISPER_GPU_DEVICE` | Indexul dispozitivului Vulkan la care se fixează transcrierea, pentru sisteme cu mai multe GPU-uri (indexul de enumerare Vulkan — verifică jurnalul de pornire al whisper-cli; nu ordinea GPU din Windows). Suprascriabil per apel cu `gpu_device`. Vezi [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Limita transcrierii în prim-plan în secunde (implicit 210). Fișierele estimate să ruleze mai mult sunt direcționate către modul în fundal în loc să riște timpul de expirare al instrumentului de ~4 minute al Claude Desktop. |
 | `FFMPEG_PATH` | Calea către ffmpeg dacă nu este în PATH-ul sistemului |
 | `WHISPER_PRIVACY_MODE` | Când `true`, răspunsurile instrumentelor returnează doar metadate — niciun text de transcriere nu este transmis lui Claude. Pentru conținut reglementat sau confidențial. Poate fi suprascris per apel prin parametrul `privacy_mode`. Vezi [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Când `true`, suprimă dezvăluirea de consimțământ unică per sesiune înainte de returnarea textului de transcriere. Setează după ce ai revizuit limitele de confidențialitate când memento-ul nu mai este necesar. Nu are efect când modul de confidențialitate este activ. |

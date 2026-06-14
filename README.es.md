@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Servidor MCP (Model Context Protocol) nativo para Windows. Utiliza [whisper.cpp](https://github.com/ggml-org/whisper.cpp) para transcribir archivos de audio y video localmente en Claude Desktop — con aceleración por GPU, soporte multilingüe y procesamiento por lotes. Toda la transcripción se ejecuta localmente — ningún archivo de audio, video ni ruta de archivo se envía al exterior.
 
 > **¿Por qué existe este paquete?**
@@ -364,6 +368,8 @@ Esta herramienta fue creada para minimizar las interacciones con la API de Claud
 | `WHISPER_CLI_PATH` | Ruta a whisper-cli.exe (obligatorio) |
 | `WHISPER_MODEL` | Ruta al archivo de modelo .bin (obligatorio) |
 | `WHISPER_THREADS` | Anula el número de hilos de CPU |
+| `WHISPER_GPU_DEVICE` | Índice del dispositivo Vulkan al que fijar la transcripción, para sistemas con múltiples GPU (el índice de enumeración de Vulkan — consulta el registro de inicio de whisper-cli; no el orden de GPU de Windows). Anulable por llamada con `gpu_device`. Ver [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Límite de la transcripción en primer plano en segundos (predeterminado 210). Los archivos cuya ejecución se estima más larga se enrutan al modo en segundo plano en lugar de arriesgar el tiempo de espera de herramienta de ~4 minutos de Claude Desktop. |
 | `FFMPEG_PATH` | Ruta a ffmpeg si no está en el PATH del sistema |
 | `WHISPER_PRIVACY_MODE` | Establece en `true` para que todas las respuestas de herramientas devuelvan solo metadatos — ningún texto de transcripción devuelto a Claude. Para contenido regulado o confidencial. Puede anularse por llamada con el parámetro `privacy_mode`. Ver [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Establece en `true` para omitir la divulgación de consentimiento única por sesión que se muestra antes de devolver texto de transcripción. Establécelo cuando entiendas los límites de privacidad y ya no necesites el recordatorio. Sin efecto cuando el modo de privacidad está activo. |

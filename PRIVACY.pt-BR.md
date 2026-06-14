@@ -89,6 +89,8 @@ Quando o modo de privacidade está ativo, uma confirmação de divulgação é e
 
 O texto da divulgação é idêntico a cada vez por design. A repetição é o ponto: se você está lidando com conteúdo sensível, você deve confirmar explicitamente cada operação.
 
+A confirmação está vinculada à **operação específica** — a ferramenta junto com seus argumentos exatos. Confirmar uma transcrição não pode satisfazer a barreira de uma operação diferente, e alterar qualquer parâmetro é tratado como uma nova operação que exige sua própria confirmação.
+
 Para `start_batch` com modo de privacidade: uma confirmação é necessária antes de o lote começar. Todos os arquivos são então processados sem supervisão. Nenhum texto de transcrição é retornado em nenhum momento — apenas metadados de progresso do lote.
 
 ---

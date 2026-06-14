@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Máy chủ MCP (Model Context Protocol) dành riêng cho Windows. Sử dụng [whisper.cpp](https://github.com/ggml-org/whisper.cpp) để phiên âm tệp âm thanh và video cục bộ trong Claude Desktop — hỗ trợ tăng tốc GPU, đa ngôn ngữ và xử lý hàng loạt. Toàn bộ quá trình phiên âm chạy cục bộ — không có tệp âm thanh, video hay đường dẫn tệp nào được gửi ra ngoài.
 
 > **Tại sao có gói này?**
@@ -364,6 +368,8 @@ Công cụ này được xây dựng để giảm thiểu các tương tác vớ
 | `WHISPER_CLI_PATH` | Đường dẫn đến whisper-cli.exe (bắt buộc) |
 | `WHISPER_MODEL` | Đường dẫn đến tệp mô hình .bin (bắt buộc) |
 | `WHISPER_THREADS` | Ghi đè số luồng CPU |
+| `WHISPER_GPU_DEVICE` | Chỉ số thiết bị Vulkan để ghim phiên âm, dành cho hệ thống nhiều GPU (chỉ số liệt kê của Vulkan — kiểm tra nhật ký khởi động của whisper-cli; không phải thứ tự GPU của Windows). Có thể ghi đè theo từng lệnh gọi bằng `gpu_device`. Xem [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Ngưỡng cắt phiên âm ở tiền cảnh tính bằng giây (mặc định 210). Các tệp được ước tính chạy lâu hơn sẽ được định tuyến sang chế độ nền thay vì mạo hiểm với thời gian chờ công cụ ~4 phút của Claude Desktop. |
 | `FFMPEG_PATH` | Đường dẫn đến ffmpeg nếu không có trong PATH hệ thống |
 | `WHISPER_PRIVACY_MODE` | Đặt thành `true` để tất cả phản hồi công cụ chỉ trả về siêu dữ liệu — không có văn bản phiên âm nào được trả về cho Claude. Dùng cho nội dung được quản lý hoặc bí mật. Có thể ghi đè theo từng lệnh gọi bằng tham số `privacy_mode`. Xem [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Đặt thành `true` để bỏ qua công khai đồng ý phiên một lần hiển thị trước khi trả về văn bản phiên âm. Đặt khi bạn hiểu ranh giới quyền riêng tư và không cần nhắc nhở nữa. Không có hiệu lực khi chế độ quyền riêng tư đang hoạt động. |

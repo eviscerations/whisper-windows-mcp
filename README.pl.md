@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Natywny serwer MCP (Model Context Protocol) dla Windows. Używa [whisper.cpp](https://github.com/ggml-org/whisper.cpp) do lokalnej transkrypcji plików audio i wideo w Claude Desktop — z akceleracją GPU, obsługą wielu języków i przetwarzaniem wsadowym. Cała transkrypcja odbywa się lokalnie — żadne pliki audio, wideo ani ścieżki do plików nie są wysyłane na zewnątrz.
 
 > **Dlaczego ten pakiet istnieje?**
@@ -375,6 +379,8 @@ To narzędzie zostało stworzone, aby zminimalizować interakcje z API Claude. C
 | `WHISPER_CLI_PATH` | Ścieżka do whisper-cli.exe (wymagana) |
 | `WHISPER_MODEL` | Ścieżka do pliku modelu .bin (wymagana) |
 | `WHISPER_THREADS` | Zastąp liczbę wątków CPU |
+| `WHISPER_GPU_DEVICE` | Indeks urządzenia Vulkan, do którego przypiąć transkrypcję, dla systemów z wieloma GPU (indeks enumeracji Vulkan — sprawdź log startowy whisper-cli; nie kolejność GPU w Windows). Możliwe do zastąpienia per wywołanie przez `gpu_device`. Zobacz [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Limit transkrypcji na pierwszym planie w sekundach (domyślnie 210). Pliki, których czas wykonania szacuje się na dłuższy, są kierowane do trybu w tle zamiast ryzykować ~4-minutowy limit czasu narzędzia w Claude Desktop. |
 | `FFMPEG_PATH` | Ścieżka do ffmpeg jeśli nie ma go w systemowym PATH |
 | `WHISPER_PRIVACY_MODE` | Gdy `true`, odpowiedzi narzędzi zwracają tylko metadane — żaden tekst transkrypcji nie jest przesyłany do Claude. Dla treści regulowanych lub poufnych. Może być zastąpione per wywołanie przez parametr `privacy_mode`. Zobacz [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Gdy `true`, pomija jednorazowe ujawnienie zgody dla sesji przed zwróceniem tekstu transkrypcji. Ustaw po zapoznaniu się z granicami prywatności, gdy przypomnienie nie jest już potrzebne. Nie ma efektu gdy tryb prywatności jest aktywny. |

@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 Server MCP (Model Context Protocol) khusus Windows. Menggunakan [whisper.cpp](https://github.com/ggml-org/whisper.cpp) untuk transkripsi file audio dan video secara lokal di Claude Desktop — dengan akselerasi GPU, dukungan multibahasa, dan pemrosesan batch. Semua transkripsi berjalan secara lokal — tidak ada file audio, video, maupun jalur file yang dikirim keluar.
 
 > **Mengapa paket ini ada?**
@@ -375,6 +379,8 @@ Alat ini dibangun untuk meminimalkan interaksi Claude API. Seluruh alur kerja tr
 | `WHISPER_CLI_PATH` | Jalur ke whisper-cli.exe (wajib) |
 | `WHISPER_MODEL` | Jalur ke file model .bin (wajib) |
 | `WHISPER_THREADS` | Override jumlah thread CPU |
+| `WHISPER_GPU_DEVICE` | Indeks perangkat Vulkan untuk menyematkan transkripsi, untuk sistem multi-GPU (indeks enumerasi Vulkan — periksa log startup whisper-cli; bukan urutan GPU Windows). Dapat di-override per-panggilan dengan `gpu_device`. Lihat [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Batas transkripsi latar depan dalam detik (default 210). File yang diperkirakan berjalan lebih lama dirutekan ke mode latar belakang alih-alih mempertaruhkan batas waktu alat ~4 menit milik Claude Desktop. |
 | `FFMPEG_PATH` | Jalur ke ffmpeg jika tidak ada di PATH sistem |
 | `WHISPER_PRIVACY_MODE` | Saat `true`, semua respons alat hanya mengembalikan metadata — tidak ada teks transkrip yang dikirimkan ke API Claude. Untuk konten yang diatur atau rahasia. Dapat di-override per-panggilan dengan parameter `privacy_mode`. Lihat [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Saat `true`, melewati pengungkapan persetujuan sesi satu kali yang ditampilkan sebelum teks transkrip dikembalikan. Atur setelah Anda memahami batas privasi dan tidak lagi membutuhkan pengingat. Tidak berpengaruh saat mode privasi aktif. |

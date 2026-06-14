@@ -53,6 +53,18 @@ Folosește raportarea privată a vulnerabilităților GitHub:
 
 Vei primi un răspuns în 7 zile. Dacă vulnerabilitatea este confirmată, o corecție va fi lansată cât mai curând posibil și vei fi creditat în notele de lansare dacă dorești.
 
+## Sandbox și aprobări
+
+whisper-windows-mcp este un **instrument local, cu un singur utilizator, controlat de proprietarul calculatorului prin Claude Desktop.** Modelul său de amenințare este proprietarul care îl rulează pe propriul calculator — nu o implementare neautorizată, multi-tenant sau expusă la rețea.
+
+- **Sandbox:** niciunul, prin design. `whisper-cli.exe` rulează la nivelul de permisiuni al proprietarului însuși, la fel ca orice server MCP local. Izolarea la nivel de SO nu este măsura de atenuare aici; domeniul de utilizare este — **nu expune acest server la acces de rețea neautorizat** (vezi „Injecție de cale de fișier" mai jos).
+- **Aprobările sunt stratificate, nu bazate pe sandbox:**
+  1. **Aprobarea gazdei** — stratul MCP al Claude Desktop controlează invocarea instrumentelor.
+  2. **Bariere de consimțământ / confidențialitate** — o confirmare explicită este necesară înainte ca orice text de transcriere să părăsească calculatorul către API-ul Claude; `WHISPER_PRIVACY_MODE` / `privacy_mode` per apel returnează doar metadate pentru conținut reglementat. Bariera este cheiată per operațiune (instrument + argumente). Vezi [PRIVACY.md](PRIVACY.md).
+  3. **Validarea intrărilor** — căile de traversare a directoarelor și UNC sunt respinse; `switch_model` este limitat la directorul de modele configurat; `download_model` este restricționat la o listă de permise de spații de nume Hugging Face de încredere.
+
+Acest instrument **nu** este conceput pentru a fi controlat de un agent neautorizat sau rulat ca infrastructură partajată. O astfel de poziție ar necesita sandbox de SO/container și o politică de ieșire — în afara domeniului unui instrument de transcriere local cu un singur utilizator.
+
 ## Decizii de proiectare cunoscute
 
 - **Injecție de cale de fișier:** Instrumentele acceptă căi absolute de fișiere de la Claude. Acesta este un design intenționat — instrumentul este destinat utilizării cu Claude Desktop de către proprietarul calculatorului. Nu expune acest server MCP la acces de rețea neautorizat.
@@ -60,5 +72,5 @@ Vei primi un răspuns în 7 zile. Dacă vulnerabilitatea este confirmată, o cor
 - **Fișiere temporare:** Fișierele WAV intermediare sunt scrise în `%TEMP%\whisper_tmp_*.wav` și șterse după transcriere. Fișierele de stare a sarcinilor sunt scrise în `%TEMP%\whisper-mcp-jobs\` și curățate automat după 7 zile la pornirea serverului.
 - **Conținut de transcriere:** Textul de transcriere returnat în răspunsurile instrumentelor este procesat de API-ul Claude în modul standard. Activează `WHISPER_PRIVACY_MODE=true` sau transmite `privacy_mode=true` per apel pentru a preveni aceasta. Vezi [PRIVACY.md](PRIVACY.md).
 - **Injecție de transcriere:** Fișierele audio pot conține conținut vorbit care, atunci când este transcris, seamănă cu instrucțiuni. Apărările încorporate ale Claude gestionează acest lucru. Serverul MCP în sine marchează tot conținutul de transcriere ca date neautorizate și nu le interpretează niciodată ca instrucțiuni.
-- **Descărcări de modele:** Instrumentul `download_model` descarcă doar din două spații de nume Hugging Face de încredere (`ggerganov/whisper.cpp` și `ggml-org`). Redirecționările sunt validate față de o listă de permise înainte de a fi urmate. URL-urile arbitrare sunt respinse la nivel de cod.
-- **Schimbarea modelelor:** `switch_model` acceptă doar fișiere `.bin` în directorul de modele configurat. Căile din afara acelui director sunt respinse indiferent de modul în care sunt specificate.
+- **Descărcări de modele:** Instrumentul `download_model` descarcă doar din două spații de nume Hugging Face de încredere (`ggerganov/whisper.cpp` și `ggml-org`). Redirecționările sunt validate față de o listă de permise înainte de a fi urmate. URL-urile arbitrare sunt respinse la nivel de cod. Descărcările trunchiate/incomplete sunt respinse (verificare Content-Length) înainte ca un fișier `.part` să fie promovat la numele modelului.
+- **Schimbarea modelelor:** `switch_model` acceptă doar fișiere `.bin` în directorul de modele configurat. Căile din afara lui sunt respinse prin izolare normalizată a căilor — un director cu prefix-frate precum `…\models-evil` nu poate satisface verificarea — indiferent de modul în care este specificată calea.
