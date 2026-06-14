@@ -89,6 +89,8 @@ When privacy mode is active, a confirmation disclosure is shown **before every o
 
 The disclosure text is identical every time by design. The repetition is the point: if you are handling sensitive content, you should be confirming each operation explicitly.
 
+The confirmation is bound to the **specific operation** — the tool plus its exact arguments. Confirming one transcription cannot satisfy a different operation's gate, and changing any parameter is treated as a new operation requiring its own confirmation.
+
 For `start_batch` with privacy mode: one confirmation is required before the batch starts. All files then process unattended. No transcript text is returned at any point — only batch progress metadata.
 
 ---

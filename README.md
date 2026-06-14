@@ -375,6 +375,8 @@ This tool is built to minimize Claude API interactions. The entire transcription
 | `WHISPER_CLI_PATH` | Path to whisper-cli.exe (required) |
 | `WHISPER_MODEL` | Path to model .bin file (required) |
 | `WHISPER_THREADS` | CPU thread count override |
+| `WHISPER_GPU_DEVICE` | Vulkan device index to pin transcription to, for multi-GPU systems (the Vulkan enumeration index — check whisper-cli's startup log; not the Windows GPU order). Overridable per-call with `gpu_device`. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
+| `WHISPER_FOREGROUND_MAX_SEC` | Foreground-transcription cutoff in seconds (default 210). Files estimated to run longer are routed to background mode instead of risking Claude Desktop's ~4-minute tool timeout. |
 | `FFMPEG_PATH` | Path to ffmpeg if not in system PATH |
 | `WHISPER_PRIVACY_MODE` | When `true`, all tool responses return metadata only — no transcript text transmitted to Claude's API. For regulated or confidential content. Can be overridden per-call with the `privacy_mode` parameter. See [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | When `true`, skips the one-time session consent disclosure shown before transcript text is returned. Set after you understand the privacy boundary and no longer need the reminder. Has no effect when privacy mode is active. |

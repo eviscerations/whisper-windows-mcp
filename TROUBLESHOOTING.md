@@ -79,6 +79,16 @@ vulkaninfo
 
 Any output confirms Vulkan is available. If `vulkaninfo` fails, install the latest GPU driver from your GPU vendor's site.
 
+### Transcription runs on the wrong GPU (multi-GPU systems)
+
+By default whisper-cli uses Vulkan device 0. On a multi-GPU machine that may not be the card you want. Pin a specific device with the `WHISPER_GPU_DEVICE` env var (or the per-call `gpu_device` parameter, which now also works on `generate_subtitles`):
+
+```json
+"env": { "WHISPER_GPU_DEVICE": "1" }
+```
+
+⚠️ **The index is the Vulkan enumeration order, NOT the Windows "GPU 0 / GPU 1" order** — they often differ. To find the right number, run `whisper-cli.exe` on any file once and read its startup log: it prints `ggml_vulkan: 0 = <name>`, `ggml_vulkan: 1 = <name>`. Use the index that lists your target card. `check_config` echoes the active device so you can confirm the pin took.
+
 ### VRAM reported as half the actual size (AMD)
 
 This is a known Windows reporting quirk for AMD GPUs with unified/shared memory. The actual available VRAM for processing is typically double what `wmic` reports. The model recommendation may be overly conservative as a result — you can try a larger model than recommended and observe whether transcription completes successfully.
@@ -172,6 +182,12 @@ Note: this has no effect when privacy mode is active.
 ---
 
 ## Background transcription and batch
+
+### "This file is ~X long — run it in the background" / foreground transcription times out
+
+Claude Desktop enforces a ~4-minute timeout on any single MCP tool call. A long file transcribed in **foreground** (blocking) mode can exceed it — the transcript still finishes and is written to disk, but the tool call itself errors out. To prevent that silent failure, `transcribe_audio` and `generate_subtitles` estimate the run time up front and, if it would likely cross the ceiling, return a message telling you to re-run with `background=true`. Background mode returns a job ID immediately and has no such limit — monitor it with `check_progress`.
+
+Much of a transcription's wall-clock is **model loading**, not transcription: whisper-cli reloads the model on every invocation, and a large model (e.g. `large-v3`, 2.9 GB) on a memory-constrained GPU can take ~2 minutes to load before transcription even begins (a smaller or quantized model loads faster). The guard's threshold is configurable with `WHISPER_FOREGROUND_MAX_SEC` (seconds; default 210).
 
 ### Background job never shows as complete
 
