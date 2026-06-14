@@ -1,5 +1,9 @@
 # whisper-windows-mcp
 
+[![CI](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/eviscerations/whisper-windows-mcp/actions/workflows/ci.yml)
+
+[![whisper-windows-mcp MCP server](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp/badges/card.svg)](https://glama.ai/mcp/servers/eviscerations/whisper-windows-mcp)
+
 A Windows-native MCP (Model Context Protocol) server that lets Claude Desktop transcribe audio and video files locally using [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — with GPU acceleration, multilingual support, and batch processing. All transcription runs locally — no audio, video, or file paths ever leave your machine.
 
 > **Why does this exist?**
