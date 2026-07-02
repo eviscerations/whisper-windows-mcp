@@ -32,7 +32,7 @@
     "multilingual"
   ],
   "author": "eviscerations",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "LicenseRef-Dual-NonCommercial-Commercial",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
