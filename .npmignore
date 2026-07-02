@@ -1,5 +1,6 @@
 src/
 test/
+.claude/
 *.bak
 FUNDING.yml
 ROADMAP.md

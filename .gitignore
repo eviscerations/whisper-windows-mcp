@@ -5,3 +5,4 @@ dist/
 sync_docs.py
 patch_roadmaps.py
 translated_output/
+.claude/settings.local.json
