@@ -183,6 +183,7 @@ Transcribe a single file. Supports blocking (default) or background mode for lon
 | `word_timestamps` | One word per timestamped segment. Useful for clip alignment. |
 | `max_segment_length` | Max segment length in characters. |
 | `diarize` | Stereo speaker diarization — requires stereo audio with speakers on separate channels. |
+| `tinydiarize` | Mono speaker-turn detection — marks `[SPEAKER_TURN]` at speaker changes on single-channel audio. Requires a tdrz model: `download_model small.en-tdrz`, then `switch_model ggml-small.en-tdrz.bin`. |
 | `vad_model` | Path to Silero VAD model .bin. Strips silence before transcription — reduces hallucinations on noisy files. |
 | `offset_t` | Start offset in milliseconds. |
 | `duration` | Process duration in milliseconds from offset. |
@@ -309,6 +310,21 @@ Detect GPU hardware and verify Vulkan acceleration is available. Reports GPU nam
 
 ---
 
+### `whisper_server`
+Start, stop, or check the **persistent model server** (whisper.cpp's `whisper-server`). While running, the active model stays resident in VRAM and every `transcribe_audio` / `transcribe_batch` call is served over localhost with **no per-file model reload** — a large speedup when transcribing many short files, where the one-time model-load cost otherwise dominates.
+
+| Parameter | Description |
+|---|---|
+| `action` | `start` — launch with the active model resident; `stop` — shut down and free VRAM; `status` — report running state, resident model, port, and uptime. |
+
+- ⚠️ **The resident model holds GPU VRAM for the server's whole lifetime.** Start it deliberately, do your work, then `stop` it to hand the GPU back to other applications sharing the card. Stopping performs a full kill so VRAM is actually released.
+- `switch_model` while the server is running hot-swaps the resident model in place (no restart).
+- Bound to `127.0.0.1` only — never exposed on the network.
+- While the server is up, operations that need the one-shot CLI — background jobs, `start_batch`, `generate_subtitles`, `lrc`/`csv` output, and advanced per-call options the HTTP API doesn't honor (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`) — are **refused** with a "stop the server first" message rather than silently ignored, so no second engine ever contends for the GPU.
+- Requires `whisper-server.exe` (ships alongside `whisper-cli.exe`). Configure with `WHISPER_SERVER_PATH` / `WHISPER_SERVER_PORT` if needed.
+
+---
+
 ## Supported formats
 
 | Type | Formats |
@@ -382,6 +398,8 @@ This tool is built to minimize Claude API interactions. The entire transcription
 | `WHISPER_GPU_DEVICE` | Vulkan device index to pin transcription to, for multi-GPU systems (the Vulkan enumeration index — check whisper-cli's startup log; not the Windows GPU order). Overridable per-call with `gpu_device`. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
 | `WHISPER_FOREGROUND_MAX_SEC` | Foreground-transcription cutoff in seconds (default 210). Files estimated to run longer are routed to background mode instead of risking Claude Desktop's ~4-minute tool timeout. |
 | `FFMPEG_PATH` | Path to ffmpeg if not in system PATH |
+| `WHISPER_SERVER_PATH` | Path to `whisper-server.exe` for the persistent model server (default: alongside `whisper-cli.exe`). See the `whisper_server` tool. |
+| `WHISPER_SERVER_PORT` | Localhost port for the persistent model server (default 8571). Always bound to `127.0.0.1`. |
 | `WHISPER_PRIVACY_MODE` | When `true`, all tool responses return metadata only — no transcript text transmitted to Claude's API. For regulated or confidential content. Can be overridden per-call with the `privacy_mode` parameter. See [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | When `true`, skips the one-time session consent disclosure shown before transcript text is returned. Set after you understand the privacy boundary and no longer need the reminder. Has no effect when privacy mode is active. |
 
@@ -397,13 +415,15 @@ Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
 
 The expected hash for the v1.4.0 release binary is documented in the [releases page](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
 
-**Input validation.** All file paths are validated before use — UNC paths (`\\server\share`) and directory traversal sequences (`..`) are rejected. Files over 10 GB are rejected to prevent resource exhaustion.
+**Input validation.** All file and folder paths are validated before use, on every tool that takes one — UNC paths (`\\server\share`) and directory traversal sequences (`..`) are rejected. Files over 10 GB are rejected to prevent resource exhaustion. `job_id` and `batch_id` are checked against the exact server-minted format before they are used to build any file path, so a crafted ID cannot traverse out of the jobs directory.
 
-**Transcript injection awareness.** Audio files can contain spoken content that, when transcribed, resembles instructions. Claude's built-in defenses handle this, but it is worth knowing that transcript content is treated as data — never as instructions — by the MCP server itself.
+**Transcript injection awareness.** Audio files can contain spoken content that, when transcribed, resembles instructions. Claude's built-in defenses handle this, but it is worth knowing that transcript content is treated as data — never as instructions — by the MCP server itself. Because transcribed content can still influence which tools Claude calls next, path/ID validation is applied defensively rather than trusting the single-user assumption alone.
 
-**Model downloads are restricted.** The `download_model` tool only downloads from two trusted Hugging Face namespaces (`ggerganov/whisper.cpp` and `ggml-org`). Arbitrary URLs are rejected. Redirects are validated against an allowlist before following.
+**Model downloads are restricted.** The `download_model` tool only downloads from two trusted Hugging Face namespaces (`ggerganov/whisper.cpp` and `ggml-org`). Arbitrary URLs are rejected. Redirects are validated against an allowlist before following. (Downloads are not yet verified against a per-model SHA256 digest — see SECURITY.md.)
 
-**Model switching is sandboxed.** `switch_model` only accepts `.bin` files within the configured models directory. Paths outside that directory are rejected.
+**Model selection is sandboxed.** Both `switch_model` and the `transcribe_audio` `model` override only accept `.bin` files within the configured models directory. Paths outside that directory are rejected via normalized path containment.
+
+**No PATH shadowing.** System binaries the server invokes on your behalf (`tasklist`, `wmic`) are called by absolute `System32` path so they can't be shadowed by a same-named executable earlier on `PATH`.
 
 See [SECURITY.md](SECURITY.md) for the full security policy.
 

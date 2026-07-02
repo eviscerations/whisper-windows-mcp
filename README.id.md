@@ -183,6 +183,7 @@ Transkripsi satu file. Mendukung mode pemblokiran (default) atau latar belakang 
 | `word_timestamps` | Satu kata per segmen bertimestamp. Berguna untuk penyelarasan klip. |
 | `max_segment_length` | Panjang segmen maksimum dalam karakter. |
 | `diarize` | Diarisasi pembicara stereo — memerlukan audio stereo dengan pembicara di kanal terpisah. |
+| `tinydiarize` | Deteksi pergantian pembicara mono — menandai `[SPEAKER_TURN]` pada perubahan pembicara di audio satu kanal. Memerlukan model tdrz: `download_model small.en-tdrz`, lalu `switch_model ggml-small.en-tdrz.bin`. |
 | `vad_model` | Jalur ke file .bin model Silero VAD. Menghapus keheningan sebelum transkripsi — mengurangi halusinasi pada file yang bising. |
 | `offset_t` | Offset mulai dalam milidetik. |
 | `duration` | Durasi pemrosesan dalam milidetik dari offset. |
@@ -309,6 +310,21 @@ Deteksi hardware GPU dan konfirmasi akselerasi Vulkan tersedia. Melaporkan nama 
 
 ---
 
+### `whisper_server`
+Jalankan, hentikan, atau periksa **server model persisten** (`whisper-server` milik whisper.cpp). Selama berjalan, model aktif tetap berada di VRAM dan setiap panggilan `transcribe_audio` / `transcribe_batch` dilayani melalui localhost dengan **tanpa pemuatan ulang model per file** — percepatan besar saat mentranskrip banyak file pendek, di mana biaya pemuatan model satu kali biasanya mendominasi.
+
+| Parameter | Deskripsi |
+|---|---|
+| `action` | `start` — luncurkan dengan model aktif tetap berada di memori; `stop` — matikan dan bebaskan VRAM; `status` — laporkan status berjalan, model yang berada di memori, port, dan uptime. |
+
+- ⚠️ **Model yang berada di memori menahan VRAM GPU selama seluruh masa hidup server.** Mulai secara sengaja, lakukan pekerjaan Anda, lalu `stop` untuk mengembalikan GPU ke aplikasi lain yang berbagi kartu tersebut. Menghentikan melakukan kill penuh sehingga VRAM benar-benar dibebaskan.
+- `switch_model` saat server berjalan melakukan hot-swap model yang berada di memori di tempat (tanpa restart).
+- Terikat hanya ke `127.0.0.1` — tidak pernah terekspos di jaringan.
+- Selama server aktif, operasi yang memerlukan CLI sekali-jalan — tugas latar belakang, `start_batch`, `generate_subtitles`, output `lrc`/`csv`, dan opsi per-panggilan lanjutan yang tidak didukung API HTTP (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`) — akan **ditolak** dengan pesan "hentikan server terlebih dahulu" alih-alih diabaikan secara diam-diam, sehingga tidak ada mesin kedua yang pernah bersaing untuk GPU.
+- Memerlukan `whisper-server.exe` (dikirim bersama `whisper-cli.exe`). Konfigurasikan dengan `WHISPER_SERVER_PATH` / `WHISPER_SERVER_PORT` jika diperlukan.
+
+---
+
 ## Format yang Didukung
 
 | Tipe | Format |
@@ -382,6 +398,8 @@ Alat ini dibangun untuk meminimalkan interaksi Claude API. Seluruh alur kerja tr
 | `WHISPER_GPU_DEVICE` | Indeks perangkat Vulkan untuk menyematkan transkripsi, untuk sistem multi-GPU (indeks enumerasi Vulkan — periksa log startup whisper-cli; bukan urutan GPU Windows). Dapat di-override per-panggilan dengan `gpu_device`. Lihat [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
 | `WHISPER_FOREGROUND_MAX_SEC` | Batas transkripsi latar depan dalam detik (default 210). File yang diperkirakan berjalan lebih lama dirutekan ke mode latar belakang alih-alih mempertaruhkan batas waktu alat ~4 menit milik Claude Desktop. |
 | `FFMPEG_PATH` | Jalur ke ffmpeg jika tidak ada di PATH sistem |
+| `WHISPER_SERVER_PATH` | Jalur ke `whisper-server.exe` untuk server model persisten (default: bersama `whisper-cli.exe`). Lihat alat `whisper_server`. |
+| `WHISPER_SERVER_PORT` | Port localhost untuk server model persisten (default 8571). Selalu terikat ke `127.0.0.1`. |
 | `WHISPER_PRIVACY_MODE` | Saat `true`, semua respons alat hanya mengembalikan metadata — tidak ada teks transkrip yang dikirimkan ke API Claude. Untuk konten yang diatur atau rahasia. Dapat di-override per-panggilan dengan parameter `privacy_mode`. Lihat [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Saat `true`, melewati pengungkapan persetujuan sesi satu kali yang ditampilkan sebelum teks transkrip dikembalikan. Atur setelah Anda memahami batas privasi dan tidak lagi membutuhkan pengingat. Tidak berpengaruh saat mode privasi aktif. |
 
@@ -397,13 +415,15 @@ Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
 
 Hash yang diharapkan untuk binary rilis v1.4.0 didokumentasikan di [halaman rilis](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
 
-**Validasi input.** Semua jalur file divalidasi sebelum digunakan — jalur UNC (`\\server\share`) dan urutan traversal direktori (`..`) ditolak. File di atas 10 GB ditolak untuk mencegah kelelahan sumber daya.
+**Validasi input.** Semua jalur file dan folder divalidasi sebelum digunakan, pada setiap alat yang menerimanya — jalur UNC (`\\server\share`) dan urutan traversal direktori (`..`) ditolak. File di atas 10 GB ditolak untuk mencegah kelelahan sumber daya. `job_id` dan `batch_id` diperiksa terhadap format persis yang dibuat server sebelum digunakan untuk membangun jalur file apa pun, sehingga ID yang direkayasa tidak dapat keluar dari direktori tugas melalui traversal.
 
-**Kesadaran injeksi transkrip.** File audio dapat berisi konten yang diucapkan yang, saat ditranskripsi, menyerupai instruksi. Pertahanan bawaan Claude menangani ini, tetapi perlu diketahui bahwa konten transkrip diperlakukan sebagai data — tidak pernah sebagai instruksi — oleh server MCP itu sendiri.
+**Kesadaran injeksi transkrip.** File audio dapat berisi konten yang diucapkan yang, saat ditranskripsi, menyerupai instruksi. Pertahanan bawaan Claude menangani ini, tetapi perlu diketahui bahwa konten transkrip diperlakukan sebagai data — tidak pernah sebagai instruksi — oleh server MCP itu sendiri. Karena konten yang ditranskripsi tetap dapat memengaruhi alat mana yang dipanggil Claude berikutnya, validasi jalur/ID diterapkan secara defensif alih-alih hanya mengandalkan asumsi pengguna tunggal.
 
-**Unduhan model dibatasi.** Alat `download_model` hanya mengunduh dari dua namespace Hugging Face yang terpercaya (`ggerganov/whisper.cpp` dan `ggml-org`). URL sembarang ditolak. Pengalihan divalidasi terhadap daftar izin sebelum diikuti.
+**Unduhan model dibatasi.** Alat `download_model` hanya mengunduh dari dua namespace Hugging Face yang terpercaya (`ggerganov/whisper.cpp` dan `ggml-org`). URL sembarang ditolak. Pengalihan divalidasi terhadap daftar izin sebelum diikuti. (Unduhan belum diverifikasi terhadap digest SHA256 per-model — lihat SECURITY.md.)
 
-**Penggantian model di-sandbox.** `switch_model` hanya menerima file `.bin` dalam direktori model yang dikonfigurasi. Jalur di luar direktori tersebut ditolak.
+**Pemilihan model di-sandbox.** Baik `switch_model` maupun override `model` pada `transcribe_audio` hanya menerima file `.bin` dalam direktori model yang dikonfigurasi. Jalur di luar direktori tersebut ditolak melalui penahanan jalur yang dinormalisasi.
+
+**Tidak ada PATH shadowing.** Binary sistem yang dipanggil server atas nama Anda (`tasklist`, `wmic`) dipanggil melalui jalur absolut `System32` sehingga tidak dapat dibayangi oleh executable bernama sama yang berada lebih awal di `PATH`.
 
 Lihat [SECURITY.md](SECURITY.md) untuk kebijakan keamanan lengkap.
 

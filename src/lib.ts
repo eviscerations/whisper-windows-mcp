@@ -68,6 +68,25 @@ export function isInsideDir(child: string, parent: string): boolean {
   return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
+// Job/batch identifiers are minted server-side (`job_<epochMs>_<8 hex>` /
+// `batch_<epochMs>_<8 hex>`) and only ever echoed back by the client. They are
+// interpolated directly into filesystem paths, so any value that is not the exact
+// minted shape is rejected before it can reach join()/readFileSync/writeFileSync —
+// closing directory traversal (e.g. "..\\..\\secret") into the job-file read/write/
+// delete paths.
+const JOB_ID_RE = /^job_\d+_[0-9a-f]{8}$/;
+const BATCH_ID_RE = /^batch_\d+_[0-9a-f]{8}$/;
+
+/** True only for a well-formed, server-minted job ID. Guards all job-file path building. */
+export function isValidJobId(id: unknown): boolean {
+  return typeof id === "string" && JOB_ID_RE.test(id);
+}
+
+/** True only for a well-formed, server-minted batch ID. Guards all batch-file path building. */
+export function isValidBatchId(id: unknown): boolean {
+  return typeof id === "string" && BATCH_ID_RE.test(id);
+}
+
 /** Recover the timestamped transcript lines from a whisper-cli log (drops diagnostic noise). */
 export function extractTranscriptFromLog(logContent: string): string {
   return logContent

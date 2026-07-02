@@ -183,6 +183,7 @@ Phiên âm một tệp. Hỗ trợ chế độ chặn (mặc định) hoặc n�
 | `word_timestamps` | Một từ mỗi đoạn có dấu thời gian. Hữu ích cho căn chỉnh clip. |
 | `max_segment_length` | Độ dài đoạn tối đa tính bằng ký tự. |
 | `diarize` | Phân tách người nói stereo — yêu cầu âm thanh stereo với người nói trên các kênh riêng biệt. |
+| `tinydiarize` | Phát hiện lượt nói mono — đánh dấu `[SPEAKER_TURN]` tại các điểm chuyển đổi người nói trên âm thanh đơn kênh. Cần mô hình tdrz: `download_model small.en-tdrz`, sau đó `switch_model ggml-small.en-tdrz.bin`. |
 | `vad_model` | Đường dẫn đến tệp .bin mô hình Silero VAD. Loại bỏ im lặng trước khi phiên âm — giảm ảo giác trên tệp nhiều tạp âm. |
 | `offset_t` | Độ lệch bắt đầu tính bằng mili giây. |
 | `duration` | Thời gian xử lý tính bằng mili giây kể từ độ lệch. |
@@ -298,6 +299,21 @@ Phát hiện phần cứng GPU và xác nhận tăng tốc Vulkan có sẵn. Bá
 
 ---
 
+### `whisper_server`
+Khởi động, dừng hoặc kiểm tra **máy chủ mô hình bền vững** (`whisper-server` của whisper.cpp). Khi đang chạy, mô hình đang hoạt động vẫn nằm trong VRAM và mỗi lệnh gọi `transcribe_audio` / `transcribe_batch` được phục vụ qua localhost với **không tải lại mô hình theo từng tệp** — một mức tăng tốc lớn khi phiên âm nhiều tệp ngắn, nơi chi phí tải mô hình một lần thường chiếm ưu thế.
+
+| Tham số | Mô tả |
+|---|---|
+| `action` | `start` — khởi động với mô hình đang hoạt động nằm trong bộ nhớ; `stop` — tắt và giải phóng VRAM; `status` — báo cáo trạng thái đang chạy, mô hình đang thường trú, cổng và thời gian hoạt động. |
+
+- ⚠️ **Mô hình thường trú giữ VRAM của GPU trong suốt vòng đời của máy chủ.** Hãy khởi động nó một cách có chủ ý, thực hiện công việc của bạn, sau đó `stop` nó để trả GPU lại cho các ứng dụng khác dùng chung card. Việc dừng thực hiện kill hoàn toàn để VRAM thực sự được giải phóng.
+- `switch_model` khi máy chủ đang chạy sẽ hoán đổi nóng mô hình thường trú tại chỗ (không cần khởi động lại).
+- Chỉ ràng buộc vào `127.0.0.1` — không bao giờ để lộ ra mạng.
+- Khi máy chủ đang hoạt động, các thao tác cần CLI một lần — tác vụ nền, `start_batch`, `generate_subtitles`, đầu ra `lrc`/`csv`, và các tùy chọn nâng cao theo từng lệnh gọi mà HTTP API không hỗ trợ (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`) — sẽ **bị từ chối** với thông báo "hãy dừng máy chủ trước" thay vì bị bỏ qua âm thầm, để không bao giờ có một công cụ thứ hai tranh chấp GPU.
+- Cần `whisper-server.exe` (đi kèm với `whisper-cli.exe`). Cấu hình bằng `WHISPER_SERVER_PATH` / `WHISPER_SERVER_PORT` nếu cần.
+
+---
+
 ## Định dạng được hỗ trợ
 
 | Loại | Định dạng |
@@ -371,6 +387,8 @@ Công cụ này được xây dựng để giảm thiểu các tương tác vớ
 | `WHISPER_GPU_DEVICE` | Chỉ số thiết bị Vulkan để ghim phiên âm, dành cho hệ thống nhiều GPU (chỉ số liệt kê của Vulkan — kiểm tra nhật ký khởi động của whisper-cli; không phải thứ tự GPU của Windows). Có thể ghi đè theo từng lệnh gọi bằng `gpu_device`. Xem [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
 | `WHISPER_FOREGROUND_MAX_SEC` | Ngưỡng cắt phiên âm ở tiền cảnh tính bằng giây (mặc định 210). Các tệp được ước tính chạy lâu hơn sẽ được định tuyến sang chế độ nền thay vì mạo hiểm với thời gian chờ công cụ ~4 phút của Claude Desktop. |
 | `FFMPEG_PATH` | Đường dẫn đến ffmpeg nếu không có trong PATH hệ thống |
+| `WHISPER_SERVER_PATH` | Đường dẫn đến `whisper-server.exe` cho máy chủ mô hình bền vững (mặc định: bên cạnh `whisper-cli.exe`). Xem công cụ `whisper_server`. |
+| `WHISPER_SERVER_PORT` | Cổng localhost cho máy chủ mô hình bền vững (mặc định 8571). Luôn ràng buộc vào `127.0.0.1`. |
 | `WHISPER_PRIVACY_MODE` | Đặt thành `true` để tất cả phản hồi công cụ chỉ trả về siêu dữ liệu — không có văn bản phiên âm nào được trả về cho Claude. Dùng cho nội dung được quản lý hoặc bí mật. Có thể ghi đè theo từng lệnh gọi bằng tham số `privacy_mode`. Xem [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Đặt thành `true` để bỏ qua công khai đồng ý phiên một lần hiển thị trước khi trả về văn bản phiên âm. Đặt khi bạn hiểu ranh giới quyền riêng tư và không cần nhắc nhở nữa. Không có hiệu lực khi chế độ quyền riêng tư đang hoạt động. |
 
@@ -386,13 +404,15 @@ Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
 
 Hash dự kiến được ghi lại trên [trang phát hành](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
 
-**Xác thực đầu vào.** Tất cả đường dẫn tệp được xác thực trước khi sử dụng — đường dẫn UNC (`\\server\share`) và chuỗi duyệt thư mục (`..`) bị từ chối. Tệp trên 10 GB bị từ chối để ngăn cạn kiệt tài nguyên.
+**Xác thực đầu vào.** Tất cả đường dẫn tệp và thư mục được xác thực trước khi sử dụng, trên mọi công cụ nhận đường dẫn — đường dẫn UNC (`\\server\share`) và chuỗi duyệt thư mục (`..`) bị từ chối. Tệp trên 10 GB bị từ chối để ngăn cạn kiệt tài nguyên. `job_id` và `batch_id` được kiểm tra với định dạng chính xác do máy chủ sinh ra trước khi chúng được dùng để dựng bất kỳ đường dẫn tệp nào, nên một ID được tạo thủ công không thể duyệt ra khỏi thư mục tác vụ.
 
-**Nhận thức về tiêm nhiễm phiên âm.** Tệp âm thanh có thể chứa nội dung khi phiên âm trông giống như hướng dẫn. Các biện pháp phòng thủ tích hợp của Claude xử lý điều này, nhưng biết rằng nội dung phiên âm được coi là dữ liệu — không bao giờ là hướng dẫn — bởi chính máy chủ MCP cũng rất hữu ích.
+**Nhận thức về tiêm nhiễm phiên âm.** Tệp âm thanh có thể chứa nội dung khi phiên âm trông giống như hướng dẫn. Các biện pháp phòng thủ tích hợp của Claude xử lý điều này, nhưng biết rằng nội dung phiên âm được coi là dữ liệu — không bao giờ là hướng dẫn — bởi chính máy chủ MCP cũng rất hữu ích. Bởi vì nội dung được phiên âm vẫn có thể ảnh hưởng đến việc Claude gọi công cụ nào tiếp theo, việc xác thực đường dẫn/ID được áp dụng một cách phòng thủ thay vì chỉ tin vào giả định đơn người dùng.
 
-**Tải xuống mô hình bị hạn chế.** Công cụ `download_model` chỉ tải xuống từ hai namespace Hugging Face đáng tin cậy (`ggerganov/whisper.cpp` và `ggml-org`). URL tùy ý bị từ chối. Chuyển hướng được xác thực dựa trên danh sách cho phép trước khi tuân theo.
+**Tải xuống mô hình bị hạn chế.** Công cụ `download_model` chỉ tải xuống từ hai namespace Hugging Face đáng tin cậy (`ggerganov/whisper.cpp` và `ggml-org`). URL tùy ý bị từ chối. Chuyển hướng được xác thực dựa trên danh sách cho phép trước khi tuân theo. (Các lượt tải chưa được xác minh với digest SHA256 theo từng mô hình — xem SECURITY.md.)
 
-**Chuyển đổi mô hình được sandbox hóa.** `switch_model` chỉ chấp nhận tệp `.bin` trong thư mục mô hình đã cấu hình. Đường dẫn ngoài thư mục đó bị từ chối.
+**Lựa chọn mô hình được sandbox hóa.** Cả `switch_model` và ghi đè `model` của `transcribe_audio` chỉ chấp nhận tệp `.bin` trong thư mục mô hình đã cấu hình. Đường dẫn ngoài thư mục đó bị từ chối thông qua giới hạn đường dẫn chuẩn hóa.
+
+**Không có che khuất PATH.** Các tệp nhị phân hệ thống mà máy chủ gọi thay bạn (`tasklist`, `wmic`) được gọi bằng đường dẫn `System32` tuyệt đối để chúng không thể bị che khuất bởi một tệp thực thi cùng tên đứng trước trên `PATH`.
 
 Xem [SECURITY.md](SECURITY.md) để biết chính sách bảo mật đầy đủ.
 

@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Hoja de Ruta
 
-Versión actual: **v2.4.0**
+Versión actual: **v2.5.0**
 
 ---
 
@@ -144,96 +144,114 @@ Una pasada de seguridad/robustez; la migración a Bun planificada se trasladó a
 
 ---
 
-## Planificado — v2.5.0: Migración a Bun
+## Planificado — v2.5.0: Servidor de modelo persistente
 
-Migrar el runtime de Node.js a [Bun](https://bun.sh).
+Mantener el modelo Whisper residente entre transcripciones en lugar de recargarlo en cada invocación.
 
-Claude Desktop crea un nuevo servidor MCP en cada inicio de sesión, por lo que el tiempo de arranque está en la ruta crítica. Bun ejecuta TypeScript de forma nativa sin paso de compilación, arranca significativamente más rápido que Node y tiene E/S más rápida.
+Esta es la mayor mejora de rendimiento disponible. whisper-cli es de un solo uso: recarga el modelo completo en cada llamada, y v2.4.0 midió esa recarga en ~110 s en una GPU con memoria limitada — un impuesto fijo pagado por archivo, independiente de la duración del audio. Para cargas de trabajo por lotes y de archivo, domina el tiempo total de ejecución más que la propia transcripción.
 
-**Qué cambia:**
-- Paso de compilación `tsc` y directorio `dist/` eliminados
-- Los usuarios ejecutan el código fuente TypeScript directamente
-- `tsconfig.json` se vuelve opcional
-- Scripts de `package.json` actualizados
-- Flujo de publicación en npm actualizado
+**Enfoque:** ejecutar el `whisper-server` (HTTP) incluido en whisper.cpp como un único proceso de larga duración con el modelo mantenido en memoria. El servidor MCP envía cada transcripción a él a través de localhost y recupera los resultados sin volver a pagar el coste de recarga.
 
-**Qué no cambia:**
-- Código fuente `src/index.ts` — Bun es compatible con el TypeScript existente y las APIs integradas de Node.js
-- Todos los comportamientos de herramientas y formatos de salida
-- Configuración de Claude Desktop para usuarios finales
-
----
-
-## Planificado — v2.6.0: Formatos de salida mejorados para integración con herramientas externas
-
-Soporte ampliado de formatos de salida orientado a flujos de trabajo de análisis e integración downstream. El alcance exacto se definirá basándose en los comentarios de usuarios tras v2.3.0.
-
----
-
-## Planificado — v2.7.0: Modo de transcripción de micrófono en vivo
-
-Transcripción en tiempo real desde entrada de micrófono en vivo. Transmite audio en fragmentos desde el dispositivo de grabación seleccionado a whisper, devolviendo segmentos de transcripción completados de forma continua.
+**Conciliación con "una única instancia de whisper en todo momento":** el principio se preserva, el mecanismo evoluciona. El servidor residente *se convierte* en la única instancia; el bloqueo de proceso cambia de "nunca crear un segundo whisper-cli" a "serializar las solicitudes contra el único servidor residente". No se introduce concurrencia.
 
 **Restricciones de diseño:**
-- La selección del dispositivo debe ser explícita — sin captura silenciosa del micrófono predeterminado
-- El usuario debe poder detener el stream a través de la interacción con Claude Desktop
-- No debe violar la restricción de una única instancia de whisper a la vez
-- La compensación entre latencia y precisión debe ser configurable por el usuario
+- Ciclo de vida explícito: start / stop / status, con una verificación de salud. El servidor nunca se inicia silenciosamente como efecto secundario de una llamada no relacionada.
+- Vincular solo a localhost — nunca a una interfaz enrutable. Sin exposición de red (coherente con el principio de local primero y el fortalecimiento de v2.4.0).
+- Reserva elegante: si el servidor no está en ejecución, la transcripción sigue funcionando a través de la ruta existente de whisper-cli de un solo uso. El servidor es una optimización, no una dependencia obligatoria.
+- `switch_model` recarga el modelo en el servidor residente (aún mucho más barato amortizado que recargar por archivo).
+- Las puertas de privacidad y consentimiento no cambian — se sitúan por encima del mecanismo de transcripción.
+- Selección de puerto con manejo de colisiones; apagado limpio ante SIGINT/SIGTERM junto con la limpieza existente de archivos temporales.
 
-**Estado:** Fase de diseño. Depende de una API de streaming estable de whisper.cpp.
+**Estado — Fase 1 ✅ implementada (pendiente de release):** herramienta `whisper_server` (`start` / `stop` / `status`); `transcribe_audio` y `transcribe_batch` bloqueantes se enrutan a través del servidor residente por localhost (`127.0.0.1`, verificado contra la API HTTP actual del `whisper-server` de whisper.cpp); `switch_model` intercambia en caliente el modelo residente mediante `POST /load` sin reinicio; la guarda de tiempo de espera en primer plano se omite en modo servidor (no hay recarga que pagar); `check_config` reporta el estado del servidor; el servidor propio se termina al apagarse para liberar la VRAM. La regla de un solo motor / VRAM compartida se impone con un respaldo estricto en la ruta de creación de proceso desconectado más rechazos amistosos: mientras el servidor está activo, las tareas en segundo plano, `start_batch`, `generate_subtitles`, salida `lrc`/`csv` y opciones por solicitud que la API HTTP no respeta (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`, etc.) son rechazadas con un mensaje de "detén el servidor primero" en lugar de degradarse silenciosamente. Configuración: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (predeterminado 8571, solo localhost).
+
+**Estado — Fase 2 (planificada):** enrutar segundo plano/`start_batch` a través del servidor residente. Esta es la mayor mejora de archivo/rendimiento y necesita rehacer la capa de tareas/cola en torno a solicitudes HTTP en lugar de PIDs desconectados (progreso sin un PID, cancelación). Reevaluar tras aterrizar la Fase 1.
 
 ---
 
-## Planificado — Releases futuros
+## Planificado — v2.6.0: TinyDiarize (turnos de hablante en mono, cero dependencias adicionales)
 
-### TinyDiarize
-Soporte al flag `--tinydiarize` con variantes de modelo que soportan `tdrz` (ej.: `large-v2-tdrz`). A diferencia del flag `--diarize` estéreo, TinyDiarize funciona en grabaciones mono. Requiere descarga de variante de modelo especial. Menor precisión que la diarización basada en pyannote pero sin dependencias adicionales fuera del archivo de modelo.
+Soporte a `--tinydiarize` con variantes de modelo habilitadas para `tdrz` (ej.: `ggml-small.en-tdrz.bin`). A diferencia del flag `--diarize` estéreo (v2.2.0), TinyDiarize marca los turnos de hablante en grabaciones **mono**, y no necesita nada más allá del archivo de modelo — ni Python, ni servicio externo.
 
-**Estado:** Planificado. Depende de que `download_model` soporte variantes de modelo tdrz.
+**Alcance:**
+- Añadir la(s) variante(s) de modelo `tdrz` a `MODEL_REGISTRY` para que `download_model` pueda obtenerlas de los espacios de nombres de Hugging Face de confianza existentes.
+- Propagar una opción `tinydiarize` a través de `buildArgs` y `spawnDetached` para que funcione en modos bloqueante, en segundo plano y por lotes.
 
-### Transcripción de URL de YouTube
-Transcripción directa desde URLs de YouTube via yt-dlp. Descarga de audio y transcripción en un solo paso. Requiere yt-dlp instalado y en el PATH.
+**Estado:** ✅ Implementado (pendiente de release) — parámetro `tinydiarize` en `transcribe_audio` y `generate_subtitles` (funciona en modos bloqueante y en segundo plano), `--tinydiarize` propagado a través de ambos constructores de argumentos, y `small.en-tdrz` añadido a `MODEL_REGISTRY` para `download_model`. Fiel a la filosofía: local primero, cero dependencias adicionales.
 
-**Restricciones de diseño:** yt-dlp es opcional. La herramienta debe degradarse de forma elegante con instrucciones claras de instalación si no se encuentra. Sin cambios en la funcionalidad principal para usuarios que no lo necesiten.
+---
 
-### Herramientas de flujo de trabajo de proyecto de video
-Para usuarios que gestionan proyectos grandes de edición de video con directorios de clips fuente y editados:
+## Planificado — v2.7.0: Búsqueda de transcripciones en todo el proyecto
 
-1. Escanear directorio fuente y subdirectorios de clips
-2. Coincidencia aproximada de transcripciones de clips editados con transcripciones fuente para encontrar el punto de origen
-3. Mostrar nombres de archivo descriptivos sugeridos por Claude basados en el contenido de la transcripción, requiriendo confirmación explícita del usuario antes de ejecutar cualquier renombrado
-4. Búsqueda de transcripciones en el directorio del proyecto con resultados de timecode
+Una herramienta independiente para buscar una frase o patrón en cada transcripción de un directorio de proyecto y devolver las coincidencias con su archivo de origen y timecode. Descompuesta del flujo de trabajo mayor de proyecto de video (ver "Más adelante / En consideración") — esta mitad es útil de forma independiente, de bajo riesgo y ligera en API: la búsqueda se ejecuta localmente, y Claude solo interviene cuando el usuario revisa los resultados.
+
+**Estado:** Planificado.
+
+---
+
+## Planificado — v2.8.0: Formatos de salida mejorados e integración
+
+Salida ampliada para flujos de trabajo de análisis e integración downstream. Una brecha concreta que cerrar: la salida JSON actualmente no está soportada en modo en segundo plano (cae de vuelta a texto). JSON a nivel de palabra para alineación de clips y otros formatos de integración se definirán a partir de los comentarios de usuarios.
+
+---
+
+## Más adelante / En consideración
+
+No programado, pero fiel a la filosofía y revisado según lo permita la capacidad.
+
+### Migración a Bun
+Migrar el runtime de Node.js a [Bun](https://bun.sh) para recortar el tiempo de arranque en frío del servidor MCP y eliminar el paso de compilación `tsc` (el código fuente se ejecuta directamente). Degradada de su antiguo puesto en v2.5.0: dado que el coste de recarga del modelo por invocación es el verdadero cuello de botella (ver v2.5.0 arriba), recortar el arranque de Node es una ganancia marginal, y la madurez de Bun en Windows más un cambio en el modelo de distribución conllevan riesgo. Vale la pena hacerlo eventualmente como una optimización opcional, no como una prioridad.
+
+### Flujo de trabajo de renombrado y coincidencia de proyecto de video
+La mitad más pesada de las herramientas de proyecto, una vez que aterrice la Búsqueda de transcripciones en todo el proyecto (v2.7.0): coincidencia aproximada de transcripciones de clips editados con transcripciones fuente para encontrar los puntos de origen, y mostrar nombres de archivo descriptivos sugeridos por Claude.
 
 **Restricciones de diseño:**
 - Los archivos fuente **nunca son renombrados ni modificados**
 - Todos los renombrados requieren **confirmación explícita del usuario**
-- La búsqueda es una herramienta independiente, utilizable de forma autónoma
 - El análisis y la coincidencia ocurren localmente — Claude solo es llamado cuando el usuario revisa los resultados, minimizando llamadas a la API
 
 **Estado:** Fase de diseño.
 
+### Limpieza de transcripciones basada en reglas
+Post-procesamiento local y determinista — eliminación de muletillas y falsos comienzos, controlado por el usuario. Más valioso para usuarios del modo de privacidad, donde la transcripción nunca llega a Claude para su limpieza. Deliberadamente acotado: los saltos de párrafo y la segmentación por temas son cosas que Claude ya hace bien sobre el texto devuelto, y la exportación a PDF/DOCX es un desbordamiento de alcance hacia la generación de documentos — ambos fuera de alcance aquí.
+
+**Estado:** En consideración.
+
 ### Diarización de hablantes (pyannote-audio)
-Diarización de hablantes mono completa con etiquetas de ID de hablante — marca transiciones de hablante a lo largo de toda la grabación independientemente de la configuración de canales. Diferente del flag `--diarize` estéreo integrado (v2.2.0) y TinyDiarize.
+Diarización de hablantes mono completa con etiquetas de ID de hablante a lo largo de toda la grabación. Diferente del flag `--diarize` estéreo integrado (v2.2.0) y TinyDiarize (v2.6.0).
 
-**Implementación:** Requiere [pyannote-audio](https://github.com/pyannote/pyannote-audio) — biblioteca basada en Python con requisito de token de acceso a modelos de Hugging Face. Stack de dependencias completamente separado.
+**Implementación:** requiere [pyannote-audio](https://github.com/pyannote/pyannote-audio) — una biblioteca de Python con requisito de token de acceso a Hugging Face, un stack de dependencias completamente separado. Despriorizada: choca con la filosofía de local primero / cero dependencias, y TinyDiarize ya cubre el caso mono de cero dependencias. Si se persigue, se distribuiría como un complemento avanzado opcional con su propia documentación de configuración, nunca en el paquete principal.
 
-**Estado:** Planificado como funcionalidad avanzada opcional con documentación de configuración propia. No incluido en el paquete principal.
+**Estado:** Despriorizada / opcional.
 
 ### Traducción a idiomas que no sean inglés
-El flag `--translate` de Whisper solo apunta al inglés. Soportar idiomas de destino arbitrarios requiere una API de traducción externa o modelo de traducción local.
+El flag `--translate` de Whisper solo apunta al inglés. Los idiomas de destino arbitrarios necesitan una API de traducción externa o un modelo de traducción local.
 
-**Opciones bajo consideración:** LibreTranslate (puede ser autoalojado, prioridad local), traducción LLM local, o documentación explícita como fuera de alcance.
+**Opciones bajo consideración:** LibreTranslate (puede ser autoalojado, local primero), traducción LLM local, o documentación explícita como fuera de alcance.
 
-**Estado:** Aplazado pendiente de decisión de diseño sobre local primero vs. dependencia de API.
+**Estado:** Aplazado pendiente de una decisión de local primero vs. dependencia de API.
 
-### Limpieza y formateo de transcripciones
-Pipeline de post-procesamiento:
-- Eliminación de muletillas y titubeos (opcional, controlado por el usuario)
-- Saltos de párrafo en límites de temas naturales
-- Formateo con conciencia de hablante combinado con salida de diarización
-- Exportación a PDF o DOCX
+---
 
-**Estado:** Planificado. La variante con conciencia de hablante depende de la diarización de hablantes.
+## Fuera de alcance / No planificado
+
+Funcionalidades excluidas intencionalmente, registradas aquí para que la decisión sea explícita y no resurja repetidamente.
+
+### Transcripción de micrófono en vivo — no planificada
+La transcripción en tiempo real desde un micrófono en vivo estaba antes prevista para v2.7.0. Descartada porque choca con el diseño central del proyecto:
+- **Desajuste de arquitectura:** MCP es de solicitud/respuesta, no de streaming. La captura en vivo requeriría o bien polling continuo (consume presupuesto de API) o bien una llamada de larga duración que alcanza la guarda de tiempo de espera en primer plano de v2.4.0.
+- **Principios de una única instancia / minimizar API:** devolver segmentos continuos a Claude es una constante rotación de llamadas a herramientas — lo opuesto a "funcional para usuarios del plan gratuito" — y un proceso de streaming de larga duración tensiona el bloqueo de proceso.
+- **Dependencia externa:** dependería de una API de streaming estable en whisper.cpp que no está en nuestras manos programar.
+
+El subtitulado en vivo es una categoría de producto distinta (baja latencia, gestión de dispositivos, VAD) de una herramienta de transcripción de archivos/lotes. Los usuarios que lo necesiten están mejor servidos por una herramienta dedicada en tiempo real.
+
+### Transcripción de URL de YouTube (yt-dlp) — no planificada como herramienta incluida
+La transcripción directa de YouTube a texto via yt-dlp estaba antes planificada. Descartada como funcionalidad de primera clase porque:
+- **Superficie de seguridad:** añade la obtención de URLs arbitrarias y una llamada a subproceso con entrada controlada por el usuario, revirtiendo el fortalecimiento de v2.4.0 que redujo exactamente esa superficie.
+- **Mantenimiento:** yt-dlp se rompe con frecuencia a medida que YouTube cambia — un compromiso de mantenimiento continuo.
+- **Local primero y licencias:** la adquisición de contenido por red se sitúa fuera del alcance de local primero, y empaquetar un descargador en un proyecto con licencia comercial es una zona gris de ToS/responsabilidad.
+- **Redundante:** los usuarios pueden ejecutar yt-dlp por sí mismos y apuntar `transcribe_audio` al archivo resultante.
+
+**Alternativa:** documentada como una receta (ejecuta yt-dlp, luego transcribe el archivo) en README / TROUBLESHOOTING, en lugar de una herramienta mantenida — el flujo de trabajo sigue disponible sin poseer la dependencia ni la superficie de ataque.
 
 ---
 

@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Roadmap
 
-Current version: **v2.4.0**
+Current version: **v2.5.0**
 
 ---
 
@@ -144,96 +144,114 @@ A security/robustness pass; the planned Bun migration moved to v2.5.0.
 
 ---
 
-## Planned — v2.5.0: Bun Migration
+## Planned — v2.5.0: Persistent Model Server
 
-Migrate the runtime from Node.js to [Bun](https://bun.sh).
+Keep the Whisper model resident between transcriptions instead of reloading it on every invocation.
 
-Because Claude Desktop spawns the MCP server fresh on every session startup, startup time is in the critical path. Bun runs TypeScript natively without a compilation step, starts significantly faster than Node, and has faster I/O.
+This is the single biggest throughput win available. whisper-cli is one-shot: it reloads the full model on every call, and v2.4.0 measured that reload at ~110s on a memory-constrained GPU — a fixed tax paid per file, independent of audio length. For batch and archive workloads it dominates wall-clock more than transcription itself.
 
-**What changes:**
-- Eliminates the `tsc` build step and `dist/` directory
-- Users run TypeScript source directly
-- `tsconfig.json` becomes optional
-- `package.json` scripts updated
-- npm publish workflow updated
+**Approach:** run whisper.cpp's bundled `whisper-server` (HTTP) as a single long-lived process with the model held in memory. The MCP server sends each transcription to it over localhost and gets results back without paying the reload cost again.
 
-**What doesn't change:**
-- `src/index.ts` source code — Bun is compatible with existing TypeScript and Node.js built-in APIs
-- All tool behavior and output formats
-- Claude Desktop config for end users
-
----
-
-## Planned — v2.6.0: Enhanced Output Formats for External Tool Integration
-
-Extended output format support targeted at downstream analysis and integration workflows. Exact scope to be defined based on user feedback post-v2.3.0.
-
----
-
-## Planned — v2.7.0: Live Microphone Transcription Mode
-
-Real-time transcription from a live microphone input. Stream audio from a selected recording device to whisper in chunks, returning rolling transcript segments as they complete.
+**Reconciling with "one whisper instance at all times":** the principle is preserved, the mechanism evolves. The resident server *becomes* the single instance; the process lock changes from "never spawn a second whisper-cli" to "serialize requests against the one resident server." No concurrency is introduced.
 
 **Design constraints:**
-- Device selection must be explicit — no silent default device capture
-- User must be able to stop the stream via a Claude Desktop interaction
-- Must not conflict with the one-whisper-instance-at-a-time constraint
-- Latency vs accuracy trade-off must be user-configurable
+- Explicit lifecycle: start / stop / status, with a health check. The server is never started silently as a side effect of an unrelated call.
+- Bind to localhost only — never a routable interface. No network exposure (consistent with the local-first principle and the v2.4.0 hardening).
+- Graceful fallback: if the server isn't running, transcription still works via the existing one-shot whisper-cli path. The server is an optimization, not a hard dependency.
+- `switch_model` reloads the model in the resident server (still far cheaper amortized than reloading per file).
+- Privacy and consent gates are unchanged — they sit above the transcription mechanism.
+- Port selection with collision handling; clean shutdown on SIGINT/SIGTERM alongside the existing temp-file cleanup.
 
-**Status:** Design phase. Depends on a stable streaming API in whisper.cpp.
+**Status — Phase 1 ✅ implemented (pending release):** `whisper_server` tool (`start` / `stop` / `status`); blocking `transcribe_audio` and `transcribe_batch` route through the resident server over localhost (`127.0.0.1`, verified against the current whisper.cpp `whisper-server` HTTP API); `switch_model` hot-swaps the resident model via `POST /load` with no restart; the foreground-timeout guard is skipped in server mode (no reload to pay); `check_config` reports server state; the owned server is killed on shutdown to release VRAM. The one-engine / shared-VRAM rule is enforced with a hard backstop in the detached-spawn path plus friendly refusals: while the server is up, background jobs, `start_batch`, `generate_subtitles`, `lrc`/`csv` output, and per-request options the HTTP API doesn't honor (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`, etc.) are refused with a "stop the server first" message rather than silently degrading. Config: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (default 8571, localhost-only).
+
+**Status — Phase 2 (planned):** route background/`start_batch` through the resident server. This is the larger archive/throughput win and needs the job/queue layer reworked around HTTP requests instead of detached PIDs (progress without a PID, cancellation). Re-assess after Phase 1 lands.
 
 ---
 
-## Planned — Future Releases
+## Planned — v2.6.0: TinyDiarize (mono speaker turns, zero extra dependencies)
 
-### TinyDiarize
-`--tinydiarize` flag support with `tdrz`-enabled model variants (e.g. `large-v2-tdrz`). Unlike the stereo `--diarize` flag, TinyDiarize works on mono recordings. Requires a special model variant download. Lower accuracy than pyannote-based diarization but zero additional dependencies beyond the model file.
+`--tinydiarize` support with `tdrz`-enabled model variants (e.g. `ggml-small.en-tdrz.bin`). Unlike the stereo `--diarize` flag (v2.2.0), TinyDiarize marks speaker turns on **mono** recordings, and needs nothing beyond the model file — no Python, no external service.
 
-**Status:** Planned. Depends on `download_model` supporting tdrz model variants.
+**Scope:**
+- Add the `tdrz` model variant(s) to `MODEL_REGISTRY` so `download_model` can fetch them from the existing trusted Hugging Face namespaces.
+- Plumb a `tinydiarize` option through `buildArgs` and `spawnDetached` so it works in blocking, background, and batch modes.
 
-### YouTube URL Transcription
-Direct transcription from YouTube URLs via yt-dlp. Download audio and transcribe in a single step. Requires yt-dlp installed and in PATH.
+**Status:** ✅ Implemented (pending release) — `tinydiarize` parameter on `transcribe_audio` and `generate_subtitles` (works in blocking and background modes), `--tinydiarize` threaded through both arg builders, and `small.en-tdrz` added to `MODEL_REGISTRY` for `download_model`. On-ethos: local-first, zero extra dependencies.
 
-**Design constraint:** yt-dlp is optional. Tool must degrade gracefully with clear installation instructions if not found. No change to core functionality for users who don't need it.
+---
 
-### Video Project Workflow Tools
-For users managing large video editing projects with source and edited clip directories:
+## Planned — v2.7.0: Project-Wide Transcript Search
 
-1. Scan source directory and clips subdirectory
-2. Fuzzy-match edited clip transcripts against source transcripts to locate origin points
-3. Surface Claude-suggested descriptive filenames based on transcript content, requiring explicit user confirmation before any rename executes
-4. Transcript search across a project directory with timecode results
+A standalone tool to search a phrase or pattern across every transcript in a project directory and return matches with their source file and timecode. Decomposed from the larger video-project workflow (see "Later / Under Consideration") — this half is independently useful, low-risk, and API-light: the search runs locally, and Claude is only involved when the user reviews results.
+
+**Status:** Planned.
+
+---
+
+## Planned — v2.8.0: Enhanced Output Formats & Integration
+
+Extended output for downstream analysis and integration workflows. One concrete gap to close: JSON output is currently unsupported in background mode (it falls back to text). Word-level JSON for clip alignment and other integration formats to be scoped from user feedback.
+
+---
+
+## Later / Under Consideration
+
+Not scheduled, but on-ethos and revisited as capacity allows.
+
+### Bun Migration
+Migrate the runtime from Node.js to [Bun](https://bun.sh) to cut MCP-server cold-start time and drop the `tsc` build step (source runs directly). Demoted from its former v2.5.0 slot: with the per-invocation model-reload cost being the real bottleneck (see v2.5.0 above), shaving Node's startup is a marginal gain, and Bun-on-Windows maturity plus a distribution-model change carry risk. Worth doing eventually as an optional optimization, not a priority.
+
+### Video Project Rename & Match Workflow
+The heavier half of the project tooling, once Project-Wide Transcript Search (v2.7.0) lands: fuzzy-match edited clip transcripts against source transcripts to locate origin points, and surface Claude-suggested descriptive filenames.
 
 **Design constraints:**
 - Source files are **never renamed or modified**
 - All renames require **explicit user confirmation**
-- Search is a standalone tool, usable independently
 - Analysis and matching happen locally — Claude is only invoked when the user reviews results, minimizing API calls
 
 **Status:** Design phase.
 
+### Rule-Based Transcript Cleanup
+Local, deterministic post-processing — filler word and false-start removal, user-controlled. Most valuable for privacy-mode users, where the transcript never reaches Claude for cleanup. Deliberately narrow: paragraph-breaking and topic segmentation are things Claude already does well on returned text, and PDF/DOCX export is scope creep into document generation — both out of scope here.
+
+**Status:** Under consideration.
+
 ### Speaker Diarization (pyannote-audio)
-Full mono speaker diarization with speaker ID labels — marks speaker transitions across an entire recording regardless of channel configuration. Distinct from the built-in `--diarize` stereo flag (v2.2.0) and TinyDiarize.
+Full mono speaker diarization with speaker ID labels across an entire recording. Distinct from the built-in stereo `--diarize` flag (v2.2.0) and TinyDiarize (v2.6.0).
 
-**Implementation:** Requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python-based library with a Hugging Face model access token requirement. Entirely separate dependency stack.
+**Implementation:** requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python library with a Hugging Face access-token requirement, an entirely separate dependency stack. Deprioritized: it clashes with the local-first / zero-dependency ethos, and TinyDiarize already covers the zero-dependency mono case. If pursued, it ships as an optional advanced add-on with its own setup docs, never in the main package.
 
-**Status:** Optional advanced feature with its own setup documentation. Not included in the main package.
+**Status:** Deprioritized / optional.
 
 ### Translation to Non-English Languages
-Whisper's `--translate` flag only targets English. Supporting arbitrary target languages requires an external translation API or local translation model.
+Whisper's `--translate` flag only targets English. Arbitrary target languages need an external translation API or a local translation model.
 
 **Options under consideration:** LibreTranslate (self-hostable, local-first), local LLM translation, or explicit out-of-scope documentation.
 
-**Status:** Deferred pending design decision on local-first vs API dependency.
+**Status:** Deferred pending a local-first vs API-dependency decision.
 
-### Transcript Cleanup and Formatting
-Post-processing pipeline:
-- Filler word and false-start removal (optional, user-controlled)
-- Paragraph breaks at natural topic boundaries
-- Speaker-aware formatting when combined with diarization output
-- Export to PDF or DOCX
+---
 
-**Status:** Planned. Speaker-aware variant depends on diarization.
+## Out of Scope / Not Planned
+
+Features intentionally excluded, recorded here so the decision is explicit and doesn't resurface repeatedly.
+
+### Live Microphone Transcription — not planned
+Real-time transcription from a live mic was previously slated for v2.7.0. Cut because it conflicts with the project's core design:
+- **Architecture mismatch:** MCP is request/response, not streaming. Live capture would require either continuous polling (burns API budget) or a long-blocking call that hits the v2.4.0 foreground-timeout guard.
+- **One-instance / minimize-API principles:** returning rolling segments to Claude is constant tool-call churn — the opposite of "functional for free-tier users" — and a long-lived streaming process strains the process lock.
+- **External dependency:** it would depend on a stable streaming API in whisper.cpp that isn't ours to schedule.
+
+Live captioning is a distinct product category (low latency, device management, VAD) from a file/batch transcription tool. Users needing it are better served by a dedicated real-time tool.
+
+### YouTube URL Transcription (yt-dlp) — not planned as a bundled tool
+Direct YouTube-to-transcript via yt-dlp was previously planned. Dropped as a first-class feature because:
+- **Security surface:** it adds arbitrary-URL fetching and a subprocess call with user-controlled input, reversing the v2.4.0 hardening that reduced exactly that surface.
+- **Maintenance:** yt-dlp breaks frequently as YouTube changes — an ongoing maintenance commitment.
+- **Local-first & licensing:** network content acquisition sits outside the local-first scope, and bundling a downloader into a commercially-licensed project is a ToS/liability gray area.
+- **Redundant:** users can run yt-dlp themselves and point `transcribe_audio` at the resulting file.
+
+**Alternative:** documented as a recipe (run yt-dlp, then transcribe the file) in README / TROUBLESHOOTING, rather than a maintained tool — the workflow stays available without owning the dependency or the attack surface.
 
 ---
 

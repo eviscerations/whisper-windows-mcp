@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Lộ trình phát triển
 
-Phiên bản hiện tại: **v2.4.0**
+Phiên bản hiện tại: **v2.5.0**
 
 ---
 
@@ -144,96 +144,114 @@ Một lượt rà soát bảo mật/độ bền; việc chuyển đổi Bun đã
 
 ---
 
-## Đã lên kế hoạch — v2.5.0: Chuyển đổi Bun
+## Đã lên kế hoạch — v2.5.0: Máy chủ mô hình bền vững
 
-Chuyển đổi runtime từ Node.js sang [Bun](https://bun.sh).
+Giữ mô hình Whisper thường trú giữa các lần phiên âm thay vì tải lại nó ở mỗi lần gọi.
 
-Claude Desktop tạo máy chủ MCP mới vào mỗi lần khởi động phiên, vì vậy thời gian khởi động nằm trên đường dẫn quan trọng. Bun chạy TypeScript gốc mà không cần bước biên dịch, khởi động nhanh hơn đáng kể so với Node và I/O cũng nhanh hơn.
+Đây là mức tăng thông lượng lớn nhất hiện có. whisper-cli là một lần: nó tải lại toàn bộ mô hình ở mỗi lệnh gọi, và v2.4.0 đã đo lần tải lại đó ở mức ~110 giây trên một GPU bị giới hạn bộ nhớ — một khoản thuế cố định phải trả cho mỗi tệp, độc lập với độ dài âm thanh. Đối với công việc theo đợt và lưu trữ, nó chi phối thời gian thực tế nhiều hơn cả bản thân việc phiên âm.
 
-**Những gì thay đổi:**
-- Bước biên dịch `tsc` và thư mục `dist/` bị xóa
-- Người dùng chạy mã nguồn TypeScript trực tiếp
-- `tsconfig.json` trở thành tùy chọn
-- Cập nhật script `package.json`
-- Cập nhật quy trình phát hành npm
+**Cách tiếp cận:** chạy `whisper-server` (HTTP) đi kèm của whisper.cpp như một tiến trình sống lâu duy nhất với mô hình được giữ trong bộ nhớ. Máy chủ MCP gửi mỗi lần phiên âm đến nó qua localhost và nhận kết quả về mà không phải trả chi phí tải lại lần nữa.
 
-**Những gì không thay đổi:**
-- Mã nguồn `src/index.ts` — Bun tương thích với TypeScript hiện tại và các API tích hợp sẵn của Node.js
-- Tất cả hành vi công cụ và định dạng đầu ra
-- Cấu hình Claude Desktop cho người dùng cuối
-
----
-
-## Đã lên kế hoạch — v2.6.0: Định dạng đầu ra nâng cao cho tích hợp công cụ bên ngoài
-
-Hỗ trợ định dạng đầu ra mở rộng nhắm đến quy trình phân tích và tích hợp downstream. Phạm vi chính xác sẽ được xác định dựa trên phản hồi của người dùng sau v2.3.0.
-
----
-
-## Đã lên kế hoạch — v2.7.0: Chế độ phiên âm microphone trực tiếp
-
-Phiên âm theo thời gian thực từ đầu vào microphone trực tiếp. Phát trực tuyến âm thanh theo từng đoạn từ thiết bị ghi âm được chọn đến whisper, trả về các đoạn phiên âm đã hoàn thành theo cách cuộn.
+**Điều hòa với "luôn một phiên bản whisper":** nguyên tắc được giữ nguyên, cơ chế tiến hóa. Máy chủ thường trú *trở thành* phiên bản duy nhất; khóa tiến trình thay đổi từ "không bao giờ tạo whisper-cli thứ hai" thành "tuần tự hóa các yêu cầu với một máy chủ thường trú duy nhất". Không có tính đồng thời nào được đưa vào.
 
 **Ràng buộc thiết kế:**
-- Lựa chọn thiết bị phải rõ ràng — không tự động thu microphone mặc định im lặng
-- Người dùng phải có thể dừng luồng qua tương tác Claude Desktop
-- Không được vi phạm ràng buộc một phiên bản whisper tại một thời điểm
-- Đánh đổi giữa độ trễ và độ chính xác phải có thể cấu hình bởi người dùng
+- Vòng đời rõ ràng: start / stop / status, với kiểm tra sức khỏe. Máy chủ không bao giờ được khởi động âm thầm như một tác dụng phụ của một lệnh gọi không liên quan.
+- Chỉ ràng buộc vào localhost — không bao giờ là một giao diện có thể định tuyến. Không để lộ ra mạng (nhất quán với nguyên tắc ưu tiên cục bộ và việc tăng cường của v2.4.0).
+- Dự phòng nhẹ nhàng: nếu máy chủ không chạy, việc phiên âm vẫn hoạt động qua đường dẫn whisper-cli một lần hiện có. Máy chủ là một tối ưu hóa, không phải một phụ thuộc bắt buộc.
+- `switch_model` tải lại mô hình trong máy chủ thường trú (vẫn rẻ hơn nhiều khi phân bổ so với tải lại theo từng tệp).
+- Các cổng quyền riêng tư và đồng ý không thay đổi — chúng nằm trên cơ chế phiên âm.
+- Lựa chọn cổng có xử lý xung đột; tắt sạch khi nhận SIGINT/SIGTERM cùng với việc dọn dẹp tệp tạm hiện có.
 
-**Trạng thái:** Giai đoạn thiết kế. Phụ thuộc vào API phát trực tuyến ổn định của whisper.cpp.
+**Trạng thái — Giai đoạn 1 ✅ đã triển khai (chờ phát hành):** công cụ `whisper_server` (`start` / `stop` / `status`); `transcribe_audio` và `transcribe_batch` dạng chặn định tuyến qua máy chủ thường trú trên localhost (`127.0.0.1`, đã xác minh với HTTP API `whisper-server` hiện tại của whisper.cpp); `switch_model` hoán đổi nóng mô hình thường trú qua `POST /load` mà không cần khởi động lại; bộ bảo vệ thời gian chờ tiền cảnh được bỏ qua ở chế độ máy chủ (không có việc tải lại phải trả); `check_config` báo cáo trạng thái máy chủ; máy chủ do nó sở hữu bị kill khi tắt để giải phóng VRAM. Quy tắc một-công-cụ / VRAM-dùng-chung được thực thi bằng một biện pháp chặn cứng trong đường dẫn tạo tiến trình tách rời cộng với các từ chối thân thiện: khi máy chủ đang hoạt động, tác vụ nền, `start_batch`, `generate_subtitles`, đầu ra `lrc`/`csv`, và các tùy chọn theo từng yêu cầu mà HTTP API không hỗ trợ (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`, v.v.) bị từ chối với thông báo "hãy dừng máy chủ trước" thay vì âm thầm giảm cấp. Cấu hình: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (mặc định 8571, chỉ localhost).
+
+**Trạng thái — Giai đoạn 2 (đã lên kế hoạch):** định tuyến tác vụ nền/`start_batch` qua máy chủ thường trú. Đây là mức tăng thông lượng/lưu trữ lớn hơn và cần lớp tác vụ/hàng đợi được làm lại xoay quanh các yêu cầu HTTP thay vì PID tách rời (tiến trình không có PID, hủy bỏ). Đánh giá lại sau khi Giai đoạn 1 hoàn tất.
 
 ---
 
-## Đã lên kế hoạch — Các bản phát hành tương lai
+## Đã lên kế hoạch — v2.6.0: TinyDiarize (lượt nói mono, không phụ thuộc bổ sung)
 
-### TinyDiarize
-Hỗ trợ flag `--tinydiarize` với các biến thể mô hình hỗ trợ `tdrz` (ví dụ: `large-v2-tdrz`). Không giống flag `--diarize` stereo, TinyDiarize hoạt động trên bản ghi mono. Cần tải xuống biến thể mô hình đặc biệt. Độ chính xác thấp hơn diarization dựa trên pyannote nhưng không có phụ thuộc bổ sung ngoài tệp mô hình.
+Hỗ trợ `--tinydiarize` với các biến thể mô hình hỗ trợ `tdrz` (ví dụ: `ggml-small.en-tdrz.bin`). Không giống flag `--diarize` stereo (v2.2.0), TinyDiarize đánh dấu các lượt nói trên bản ghi **mono**, và không cần gì ngoài tệp mô hình — không Python, không dịch vụ bên ngoài.
 
-**Trạng thái:** Đã lên kế hoạch. Phụ thuộc vào `download_model` hỗ trợ các biến thể mô hình tdrz.
+**Phạm vi:**
+- Thêm (các) biến thể mô hình `tdrz` vào `MODEL_REGISTRY` để `download_model` có thể lấy chúng từ các namespace Hugging Face đáng tin cậy hiện có.
+- Nối một tùy chọn `tinydiarize` qua `buildArgs` và `spawnDetached` để nó hoạt động ở chế độ chặn, nền và đợt.
 
-### Phiên âm URL YouTube
-Phiên âm trực tiếp từ URL YouTube qua yt-dlp. Tải xuống âm thanh và phiên âm trong một bước. Yêu cầu yt-dlp đã cài đặt và có trong PATH.
+**Trạng thái:** ✅ Đã triển khai (chờ phát hành) — tham số `tinydiarize` trên `transcribe_audio` và `generate_subtitles` (hoạt động ở chế độ chặn và nền), `--tinydiarize` được luồn qua cả hai bộ dựng đối số, và `small.en-tdrz` được thêm vào `MODEL_REGISTRY` cho `download_model`. Đúng tinh thần: ưu tiên cục bộ, không phụ thuộc bổ sung.
 
-**Ràng buộc thiết kế:** yt-dlp là tùy chọn. Công cụ phải hạ cấp nhẹ nhàng với hướng dẫn cài đặt rõ ràng nếu không tìm thấy. Không thay đổi chức năng cốt lõi cho người dùng không cần nó.
+---
 
-### Công cụ quy trình dự án video
-Cho người dùng quản lý các dự án chỉnh sửa video lớn với thư mục clip nguồn và đã chỉnh sửa:
+## Đã lên kế hoạch — v2.7.0: Tìm kiếm bản phiên âm toàn dự án
 
-1. Quét thư mục nguồn và thư mục con clip
-2. Khớp mờ bản phiên âm clip đã chỉnh sửa với bản phiên âm nguồn để xác định điểm gốc
-3. Hiển thị tên tệp mô tả được Claude đề xuất dựa trên nội dung phiên âm, yêu cầu xác nhận rõ ràng của người dùng trước khi thực hiện bất kỳ đổi tên nào
-4. Tìm kiếm phiên âm trong thư mục dự án với kết quả timecode
+Một công cụ độc lập để tìm kiếm một cụm từ hoặc mẫu trên mọi bản phiên âm trong một thư mục dự án và trả về các kết quả khớp cùng tệp nguồn và timecode của chúng. Được tách ra từ quy trình dự án video lớn hơn (xem "Về sau / Đang xem xét") — nửa này hữu ích một cách độc lập, rủi ro thấp và ít tốn API: việc tìm kiếm chạy cục bộ, và Claude chỉ tham gia khi người dùng xem xét kết quả.
+
+**Trạng thái:** Đã lên kế hoạch.
+
+---
+
+## Đã lên kế hoạch — v2.8.0: Định dạng đầu ra nâng cao & tích hợp
+
+Đầu ra mở rộng cho quy trình phân tích và tích hợp downstream. Một khoảng trống cụ thể cần lấp: đầu ra JSON hiện chưa được hỗ trợ ở chế độ nền (nó dự phòng về văn bản). JSON cấp từ để căn chỉnh clip và các định dạng tích hợp khác sẽ được xác định phạm vi từ phản hồi của người dùng.
+
+---
+
+## Về sau / Đang xem xét
+
+Chưa lên lịch, nhưng đúng tinh thần và được xem lại khi năng lực cho phép.
+
+### Chuyển đổi Bun
+Chuyển đổi runtime từ Node.js sang [Bun](https://bun.sh) để cắt giảm thời gian khởi động lạnh của máy chủ MCP và bỏ bước biên dịch `tsc` (mã nguồn chạy trực tiếp). Bị hạ cấp khỏi vị trí v2.5.0 trước đây: khi chi phí tải lại mô hình theo từng lần gọi là nút thắt cổ chai thực sự (xem v2.5.0 ở trên), việc cắt giảm thời gian khởi động của Node là một mức tăng biên, và độ trưởng thành của Bun trên Windows cộng với thay đổi mô hình phân phối mang theo rủi ro. Đáng làm về sau như một tối ưu hóa tùy chọn, không phải ưu tiên.
+
+### Quy trình đổi tên & khớp dự án video
+Nửa nặng hơn của bộ công cụ dự án, sau khi Tìm kiếm bản phiên âm toàn dự án (v2.7.0) hoàn thành: khớp mờ bản phiên âm clip đã chỉnh sửa với bản phiên âm nguồn để xác định điểm gốc, và hiển thị tên tệp mô tả được Claude đề xuất.
 
 **Ràng buộc thiết kế:**
 - Tệp nguồn **không bao giờ bị đổi tên hoặc sửa đổi**
 - Tất cả đổi tên cần **xác nhận rõ ràng của người dùng**
-- Tìm kiếm là công cụ độc lập, có thể dùng độc lập
 - Phân tích và khớp xảy ra cục bộ — Claude chỉ được gọi khi người dùng xem xét kết quả, giảm thiểu lệnh gọi API
 
 **Trạng thái:** Giai đoạn thiết kế.
 
+### Dọn dẹp bản phiên âm dựa trên quy tắc
+Hậu xử lý cục bộ, xác định — loại bỏ từ đệm và nói vấp, do người dùng kiểm soát. Có giá trị nhất cho người dùng chế độ quyền riêng tư, nơi bản phiên âm không bao giờ đến Claude để dọn dẹp. Được thu hẹp có chủ ý: ngắt đoạn và phân đoạn chủ đề là những việc Claude đã làm tốt trên văn bản được trả về, và xuất PDF/DOCX là sự phình phạm vi sang tạo tài liệu — cả hai đều nằm ngoài phạm vi ở đây.
+
+**Trạng thái:** Đang xem xét.
+
 ### Phân tách người nói (pyannote-audio)
-Phân tách người nói mono đầy đủ với nhãn ID người nói — đánh dấu chuyển đổi người nói trong toàn bộ bản ghi bất kể cấu hình kênh. Khác với flag `--diarize` stereo tích hợp (v2.2.0) và TinyDiarize.
+Phân tách người nói mono đầy đủ với nhãn ID người nói trong toàn bộ bản ghi. Khác với flag `--diarize` stereo tích hợp (v2.2.0) và TinyDiarize (v2.6.0).
 
-**Triển khai:** Cần [pyannote-audio](https://github.com/pyannote/pyannote-audio) — thư viện dựa trên Python với yêu cầu token truy cập mô hình Hugging Face. Stack phụ thuộc hoàn toàn riêng biệt.
+**Triển khai:** cần [pyannote-audio](https://github.com/pyannote/pyannote-audio) — thư viện Python với yêu cầu token truy cập Hugging Face, một stack phụ thuộc hoàn toàn riêng biệt. Bị hạ ưu tiên: nó xung đột với tinh thần ưu tiên cục bộ / không phụ thuộc, và TinyDiarize đã bao phủ trường hợp mono không phụ thuộc. Nếu được theo đuổi, nó sẽ được phát hành như một bổ sung nâng cao tùy chọn với tài liệu cài đặt riêng, không bao giờ trong gói chính.
 
-**Trạng thái:** Tính năng nâng cao tùy chọn với tài liệu cài đặt riêng. Không bao gồm trong gói chính.
+**Trạng thái:** Bị hạ ưu tiên / tùy chọn.
 
 ### Dịch sang ngôn ngữ không phải tiếng Anh
-Flag `--translate` của Whisper chỉ nhắm đến tiếng Anh. Hỗ trợ ngôn ngữ đích tùy ý cần API dịch bên ngoài hoặc mô hình dịch cục bộ.
+Flag `--translate` của Whisper chỉ nhắm đến tiếng Anh. Các ngôn ngữ đích tùy ý cần một API dịch bên ngoài hoặc một mô hình dịch cục bộ.
 
 **Các tùy chọn đang xem xét:** LibreTranslate (có thể tự host, ưu tiên cục bộ), dịch LLM cục bộ hoặc tài liệu rõ ràng nằm ngoài phạm vi.
 
-**Trạng thái:** Hoãn lại chờ quyết định thiết kế về cục bộ ưu tiên vs phụ thuộc API.
+**Trạng thái:** Hoãn lại chờ một quyết định về cục bộ ưu tiên vs phụ thuộc API.
 
-### Dọn dẹp và định dạng bản phiên âm
-Pipeline hậu xử lý:
-- Loại bỏ từ đệm và nói vấp (tùy chọn, người dùng kiểm soát)
-- Ngắt đoạn tại ranh giới chủ đề tự nhiên
-- Định dạng theo người nói kết hợp với đầu ra phân tách người nói
-- Xuất sang PDF hoặc DOCX
+---
 
-**Trạng thái:** Đã lên kế hoạch. Biến thể theo người nói phụ thuộc vào phân tách người nói.
+## Ngoài phạm vi / Không lên kế hoạch
+
+Các tính năng được loại trừ có chủ ý, được ghi lại ở đây để quyết định là rõ ràng và không tái xuất hiện lặp đi lặp lại.
+
+### Phiên âm microphone trực tiếp — không lên kế hoạch
+Phiên âm theo thời gian thực từ microphone trực tiếp trước đây được dự kiến cho v2.7.0. Bị cắt vì nó xung đột với thiết kế cốt lõi của dự án:
+- **Không khớp kiến trúc:** MCP là yêu cầu/phản hồi, không phải phát trực tuyến. Thu âm trực tiếp sẽ đòi hỏi hoặc polling liên tục (đốt ngân sách API) hoặc một lệnh gọi chặn dài chạm vào bộ bảo vệ thời gian chờ tiền cảnh của v2.4.0.
+- **Nguyên tắc một-phiên-bản / giảm-thiểu-API:** trả về các đoạn cuộn cho Claude là việc gọi công cụ liên tục — trái ngược với "hoạt động được cho người dùng gói miễn phí" — và một tiến trình phát trực tuyến sống lâu gây căng thẳng cho khóa tiến trình.
+- **Phụ thuộc bên ngoài:** nó sẽ phụ thuộc vào một API phát trực tuyến ổn định trong whisper.cpp mà không phải do chúng tôi lên lịch.
+
+Chú thích trực tiếp là một hạng mục sản phẩm riêng biệt (độ trễ thấp, quản lý thiết bị, VAD) so với một công cụ phiên âm tệp/đợt. Người dùng cần nó được phục vụ tốt hơn bởi một công cụ thời gian thực chuyên dụng.
+
+### Phiên âm URL YouTube (yt-dlp) — không lên kế hoạch như một công cụ đi kèm
+YouTube-sang-bản-phiên-âm trực tiếp qua yt-dlp trước đây được lên kế hoạch. Bị bỏ như một tính năng hạng nhất vì:
+- **Bề mặt bảo mật:** nó thêm việc lấy URL tùy ý và một lệnh gọi tiến trình con với đầu vào do người dùng kiểm soát, đảo ngược việc tăng cường của v2.4.0 vốn đã giảm chính xác bề mặt đó.
+- **Bảo trì:** yt-dlp thường xuyên hỏng khi YouTube thay đổi — một cam kết bảo trì liên tục.
+- **Ưu tiên cục bộ & cấp phép:** việc thu thập nội dung qua mạng nằm ngoài phạm vi ưu tiên cục bộ, và việc đóng gói một trình tải xuống vào một dự án được cấp phép thương mại là một vùng xám về ToS/trách nhiệm pháp lý.
+- **Dư thừa:** người dùng có thể tự chạy yt-dlp và trỏ `transcribe_audio` vào tệp kết quả.
+
+**Thay thế:** được ghi lại như một công thức (chạy yt-dlp, sau đó phiên âm tệp) trong README / TROUBLESHOOTING, thay vì một công cụ được bảo trì — quy trình vẫn khả dụng mà không phải sở hữu phụ thuộc hoặc bề mặt tấn công.
 
 ---
 

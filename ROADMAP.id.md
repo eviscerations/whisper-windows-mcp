@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Peta Jalan
 
-Versi saat ini: **v2.4.0**
+Versi saat ini: **v2.5.0**
 
 ---
 
@@ -144,96 +144,114 @@ Sebuah pas keamanan/ketangguhan; migrasi Bun yang direncanakan dipindahkan ke v2
 
 ---
 
-## Direncanakan — v2.5.0: Migrasi Bun
+## Direncanakan — v2.5.0: Server Model Persisten
 
-Migrasikan runtime dari Node.js ke [Bun](https://bun.sh).
+Pertahankan model Whisper tetap berada di memori antar transkripsi alih-alih memuatnya ulang pada setiap pemanggilan.
 
-Karena Claude Desktop menelurkan server MCP baru setiap kali sesi dimulai, waktu startup berada di jalur kritis. Bun menjalankan TypeScript secara asli tanpa langkah kompilasi, memulai jauh lebih cepat dari Node, dan memiliki I/O yang lebih cepat.
+Ini adalah kemenangan throughput tunggal terbesar yang tersedia. whisper-cli bersifat sekali-jalan: ia memuat ulang model penuh pada setiap panggilan, dan v2.4.0 mengukur pemuatan ulang itu di ~110d pada GPU dengan memori terbatas — pajak tetap yang dibayar per file, terlepas dari panjang audio. Untuk pekerjaan batch dan arsip, biaya ini mendominasi wall-clock lebih dari transkripsi itu sendiri.
 
-**Yang berubah:**
-- Menghilangkan langkah build `tsc` dan direktori `dist/`
-- Pengguna menjalankan source TypeScript secara langsung
-- `tsconfig.json` menjadi opsional
-- Skrip `package.json` diperbarui
-- Alur kerja publish npm diperbarui
+**Pendekatan:** jalankan `whisper-server` (HTTP) bawaan whisper.cpp sebagai satu proses berumur panjang dengan model yang ditahan di memori. Server MCP mengirim setiap transkripsi ke sana melalui localhost dan mendapatkan hasil kembali tanpa membayar biaya pemuatan ulang lagi.
 
-**Yang tidak berubah:**
-- Source code `src/index.ts` — Bun kompatibel dengan TypeScript yang ada dan API bawaan Node.js
-- Semua perilaku alat dan format output
-- Konfigurasi Claude Desktop untuk pengguna akhir
-
----
-
-## Direncanakan — v2.6.0: Format Output Lanjutan untuk Integrasi Alat Eksternal
-
-Dukungan format output lanjutan yang ditargetkan untuk analisis downstream dan alur kerja integrasi. Cakupan tepat akan ditentukan berdasarkan umpan balik pengguna pasca-v2.3.0.
-
----
-
-## Direncanakan — v2.7.0: Mode Transkripsi Mikrofon Langsung
-
-Transkripsi real-time dari input mikrofon langsung. Streaming audio dari perangkat rekaman yang dipilih ke whisper dalam potongan, mengembalikan segmen transkrip bergulir saat selesai.
+**Menyelaraskan dengan "satu instance whisper setiap saat":** prinsip dipertahankan, mekanismenya berkembang. Server residen *menjadi* instance tunggal itu; kunci proses berubah dari "jangan pernah menelurkan whisper-cli kedua" menjadi "serialkan permintaan terhadap satu server residen." Tidak ada konkurensi yang diperkenalkan.
 
 **Batasan desain:**
-- Pemilihan perangkat harus eksplisit — tidak ada penangkapan perangkat default yang diam
-- Pengguna harus dapat menghentikan stream melalui interaksi Claude Desktop
-- Tidak boleh bertentangan dengan batasan satu-instance-whisper-setiap-saat
-- Trade-off latensi vs akurasi harus dapat dikonfigurasi pengguna
+- Siklus hidup eksplisit: start / stop / status, dengan pemeriksaan kesehatan. Server tidak pernah dimulai secara diam-diam sebagai efek samping dari panggilan yang tidak berkaitan.
+- Terikat hanya ke localhost — tidak pernah antarmuka yang dapat dirutekan. Tidak ada eksposur jaringan (konsisten dengan prinsip utamakan lokal dan penguatan v2.4.0).
+- Fallback yang anggun: jika server tidak berjalan, transkripsi tetap bekerja melalui jalur whisper-cli sekali-jalan yang ada. Server adalah optimasi, bukan dependensi keras.
+- `switch_model` memuat ulang model di server residen (masih jauh lebih murah teramortisasi daripada memuat ulang per file).
+- Gerbang privasi dan persetujuan tidak berubah — keduanya berada di atas mekanisme transkripsi.
+- Pemilihan port dengan penanganan tabrakan; shutdown bersih pada SIGINT/SIGTERM bersama pembersihan file temp yang ada.
 
-**Status:** Fase desain. Bergantung pada API streaming yang stabil di whisper.cpp.
+**Status — Fase 1 ✅ diimplementasikan (menunggu rilis):** alat `whisper_server` (`start` / `stop` / `status`); `transcribe_audio` dan `transcribe_batch` pemblokiran dirutekan melalui server residen via localhost (`127.0.0.1`, diverifikasi terhadap API HTTP `whisper-server` whisper.cpp saat ini); `switch_model` melakukan hot-swap model residen via `POST /load` tanpa restart; pelindung batas waktu latar depan dilewati dalam mode server (tidak ada pemuatan ulang yang dibayar); `check_config` melaporkan status server; server yang dimiliki dibunuh saat shutdown untuk membebaskan VRAM. Aturan satu-mesin / VRAM-bersama diberlakukan dengan backstop keras di jalur detached-spawn ditambah penolakan yang ramah: selama server aktif, tugas latar belakang, `start_batch`, `generate_subtitles`, output `lrc`/`csv`, dan opsi per-permintaan yang tidak didukung API HTTP (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`, dll.) ditolak dengan pesan "hentikan server terlebih dahulu" alih-alih terdegradasi secara diam-diam. Konfigurasi: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (default 8571, hanya localhost).
+
+**Status — Fase 2 (direncanakan):** rutekan latar belakang/`start_batch` melalui server residen. Ini adalah kemenangan arsip/throughput yang lebih besar dan memerlukan lapisan tugas/antrian dikerjakan ulang di sekitar permintaan HTTP alih-alih PID detached (kemajuan tanpa PID, pembatalan). Nilai ulang setelah Fase 1 diluncurkan.
 
 ---
 
-## Direncanakan — Rilis Mendatang
+## Direncanakan — v2.6.0: TinyDiarize (pergantian pembicara mono, nol dependensi tambahan)
 
-### TinyDiarize
-Dukungan flag `--tinydiarize` dengan varian model yang mendukung `tdrz` (misalnya `large-v2-tdrz`). Berbeda dengan flag `--diarize` stereo, TinyDiarize bekerja pada rekaman mono. Memerlukan unduhan varian model khusus. Akurasi lebih rendah dari diarisasi berbasis pyannote tetapi nol dependensi tambahan di luar file model.
+Dukungan `--tinydiarize` dengan varian model yang mengaktifkan `tdrz` (mis. `ggml-small.en-tdrz.bin`). Berbeda dengan flag `--diarize` stereo (v2.2.0), TinyDiarize menandai pergantian pembicara pada rekaman **mono**, dan tidak memerlukan apa pun di luar file model — tanpa Python, tanpa layanan eksternal.
 
-**Status:** Direncanakan. Bergantung pada `download_model` yang mendukung varian model tdrz.
+**Cakupan:**
+- Tambahkan varian model `tdrz` ke `MODEL_REGISTRY` sehingga `download_model` dapat mengambilnya dari namespace Hugging Face terpercaya yang ada.
+- Salurkan opsi `tinydiarize` melalui `buildArgs` dan `spawnDetached` sehingga bekerja dalam mode pemblokiran, latar belakang, dan batch.
 
-### Transkripsi URL YouTube
-Transkripsi langsung dari URL YouTube via yt-dlp. Mengunduh audio dan mentranskrip dalam satu langkah. Memerlukan yt-dlp yang terpasang dan ada di PATH.
+**Status:** ✅ Diimplementasikan (menunggu rilis) — parameter `tinydiarize` pada `transcribe_audio` dan `generate_subtitles` (bekerja dalam mode pemblokiran dan latar belakang), `--tinydiarize` disalurkan melalui kedua pembangun argumen, dan `small.en-tdrz` ditambahkan ke `MODEL_REGISTRY` untuk `download_model`. Sesuai etos: utamakan lokal, nol dependensi tambahan.
 
-**Batasan desain:** yt-dlp bersifat opsional. Alat harus terdegradasi dengan anggun dengan instruksi instalasi yang jelas jika tidak ditemukan. Tidak ada perubahan pada fungsionalitas inti untuk pengguna yang tidak membutuhkannya.
+---
 
-### Alat Alur Kerja Proyek Video
-Untuk pengguna yang mengelola proyek pengeditan video besar dengan direktori klip sumber dan yang telah diedit:
+## Direncanakan — v2.7.0: Pencarian Transkrip di Seluruh Proyek
 
-1. Pindai direktori sumber dan subdirektori klip
-2. Cocokkan transkrip klip yang telah diedit dengan transkrip sumber secara fuzzy untuk menemukan titik asal
-3. Tampilkan nama file deskriptif yang disarankan Claude berdasarkan konten transkrip, memerlukan konfirmasi eksplisit pengguna sebelum penggantian nama dieksekusi
-4. Pencarian transkrip di seluruh direktori proyek dengan hasil timecode
+Alat mandiri untuk mencari frasa atau pola di setiap transkrip dalam direktori proyek dan mengembalikan kecocokan dengan file sumber dan timecode-nya. Diuraikan dari alur kerja proyek video yang lebih besar (lihat "Nanti / Dalam Pertimbangan") — bagian ini berguna secara independen, berisiko rendah, dan hemat API: pencarian berjalan secara lokal, dan Claude hanya terlibat saat pengguna meninjau hasil.
+
+**Status:** Direncanakan.
+
+---
+
+## Direncanakan — v2.8.0: Format Output Lanjutan & Integrasi
+
+Output lanjutan untuk analisis downstream dan alur kerja integrasi. Satu celah konkret yang harus ditutup: output JSON saat ini tidak didukung dalam mode latar belakang (kembali ke teks). JSON tingkat kata untuk penyelarasan klip dan format integrasi lainnya akan dicakup dari umpan balik pengguna.
+
+---
+
+## Nanti / Dalam Pertimbangan
+
+Tidak terjadwal, tetapi sesuai etos dan ditinjau kembali seiring kapasitas memungkinkan.
+
+### Migrasi Bun
+Migrasikan runtime dari Node.js ke [Bun](https://bun.sh) untuk memangkas waktu cold-start server MCP dan menghilangkan langkah build `tsc` (source berjalan langsung). Diturunkan dari slot v2.5.0 sebelumnya: dengan biaya pemuatan ulang model per-pemanggilan menjadi hambatan sebenarnya (lihat v2.5.0 di atas), memangkas startup Node adalah keuntungan marginal, dan kematangan Bun-di-Windows ditambah perubahan model distribusi membawa risiko. Layak dilakukan pada akhirnya sebagai optimasi opsional, bukan prioritas.
+
+### Alur Kerja Penggantian Nama & Pencocokan Proyek Video
+Bagian yang lebih berat dari perkakas proyek, setelah Pencarian Transkrip di Seluruh Proyek (v2.7.0) diluncurkan: cocokkan transkrip klip yang telah diedit dengan transkrip sumber secara fuzzy untuk menemukan titik asal, dan tampilkan nama file deskriptif yang disarankan Claude.
 
 **Batasan desain:**
 - File sumber **tidak pernah diganti nama atau dimodifikasi**
 - Semua penggantian nama memerlukan **konfirmasi eksplisit pengguna**
-- Pencarian adalah alat mandiri yang dapat digunakan secara independen
 - Analisis dan pencocokan terjadi secara lokal — Claude hanya dipanggil saat pengguna meninjau hasil, meminimalkan panggilan API
 
 **Status:** Fase desain.
 
+### Pembersihan Transkrip Berbasis Aturan
+Pasca-pemrosesan lokal dan deterministik — penghapusan kata pengisi dan awal yang salah, dikontrol pengguna. Paling berharga bagi pengguna mode privasi, di mana transkrip tidak pernah mencapai Claude untuk pembersihan. Sengaja dipersempit: pemecahan paragraf dan segmentasi topik adalah hal yang sudah dilakukan Claude dengan baik pada teks yang dikembalikan, dan ekspor PDF/DOCX adalah scope creep ke pembuatan dokumen — keduanya di luar cakupan di sini.
+
+**Status:** Dalam pertimbangan.
+
 ### Diarisasi Pembicara (pyannote-audio)
-Diarisasi pembicara mono penuh dengan label ID pembicara — menandai transisi pembicara di seluruh rekaman terlepas dari konfigurasi saluran. Berbeda dari flag `--diarize` stereo bawaan (v2.2.0) dan TinyDiarize.
+Diarisasi pembicara mono penuh dengan label ID pembicara di seluruh rekaman. Berbeda dari flag `--diarize` stereo bawaan (v2.2.0) dan TinyDiarize (v2.6.0).
 
-**Implementasi:** Memerlukan [pyannote-audio](https://github.com/pyannote/pyannote-audio) — library berbasis Python dengan persyaratan token akses model Hugging Face. Stack dependensi yang sepenuhnya terpisah.
+**Implementasi:** memerlukan [pyannote-audio](https://github.com/pyannote/pyannote-audio) — library Python dengan persyaratan token akses Hugging Face, stack dependensi yang sepenuhnya terpisah. Diprioritaskan lebih rendah: bertentangan dengan etos utamakan lokal / nol dependensi, dan TinyDiarize sudah mencakup kasus mono nol-dependensi. Jika dikejar, ia dikirim sebagai add-on lanjutan opsional dengan dokumentasi pengaturannya sendiri, tidak pernah dalam paket utama.
 
-**Status:** Fitur lanjutan opsional dengan dokumentasi pengaturannya sendiri. Tidak termasuk dalam paket utama.
+**Status:** Diprioritaskan lebih rendah / opsional.
 
 ### Terjemahan ke Bahasa Non-Inggris
-Flag `--translate` Whisper hanya menargetkan bahasa Inggris. Mendukung bahasa target sembarang memerlukan API terjemahan eksternal atau model terjemahan lokal.
+Flag `--translate` Whisper hanya menargetkan bahasa Inggris. Bahasa target sembarang memerlukan API terjemahan eksternal atau model terjemahan lokal.
 
 **Opsi yang sedang dipertimbangkan:** LibreTranslate (dapat di-host sendiri, utamakan lokal), terjemahan LLM lokal, atau dokumentasi di luar cakupan yang eksplisit.
 
-**Status:** Ditangguhkan menunggu keputusan desain tentang utamakan lokal vs ketergantungan API.
+**Status:** Ditangguhkan menunggu keputusan utamakan lokal vs ketergantungan API.
 
-### Pembersihan dan Pemformatan Transkrip
-Pipeline pasca-pemrosesan:
-- Penghapusan kata pengisi dan awal yang salah (opsional, dikontrol pengguna)
-- Jeda paragraf pada batas topik yang alami
-- Pemformatan sadar pembicara saat dikombinasikan dengan output diarisasi
-- Ekspor ke PDF atau DOCX
+---
 
-**Status:** Direncanakan. Varian sadar pembicara bergantung pada diarisasi.
+## Di Luar Cakupan / Tidak Direncanakan
+
+Fitur yang sengaja dikecualikan, dicatat di sini agar keputusannya eksplisit dan tidak muncul kembali berulang kali.
+
+### Transkripsi Mikrofon Langsung — tidak direncanakan
+Transkripsi real-time dari mikrofon langsung sebelumnya dijadwalkan untuk v2.7.0. Dipangkas karena bertentangan dengan desain inti proyek:
+- **Ketidakcocokan arsitektur:** MCP bersifat permintaan/respons, bukan streaming. Penangkapan langsung akan memerlukan polling berkelanjutan (menghabiskan anggaran API) atau panggilan yang memblokir lama yang mengenai pelindung batas waktu latar depan v2.4.0.
+- **Prinsip satu-instance / minimalkan-API:** mengembalikan segmen bergulir ke Claude adalah churn panggilan alat konstan — kebalikan dari "berfungsi untuk pengguna paket gratis" — dan proses streaming berumur panjang membebani kunci proses.
+- **Dependensi eksternal:** ia akan bergantung pada API streaming stabil di whisper.cpp yang bukan wewenang kami untuk menjadwalkan.
+
+Captioning langsung adalah kategori produk yang berbeda (latensi rendah, manajemen perangkat, VAD) dari alat transkripsi file/batch. Pengguna yang membutuhkannya lebih baik dilayani oleh alat real-time khusus.
+
+### Transkripsi URL YouTube (yt-dlp) — tidak direncanakan sebagai alat bawaan
+YouTube-ke-transkrip langsung via yt-dlp sebelumnya direncanakan. Dibatalkan sebagai fitur kelas satu karena:
+- **Permukaan keamanan:** ia menambahkan pengambilan URL sembarang dan panggilan subproses dengan input yang dikendalikan pengguna, membalik penguatan v2.4.0 yang justru mengurangi permukaan tersebut.
+- **Pemeliharaan:** yt-dlp sering rusak saat YouTube berubah — komitmen pemeliharaan yang berkelanjutan.
+- **Utamakan lokal & lisensi:** akuisisi konten jaringan berada di luar cakupan utamakan lokal, dan membundel pengunduh ke proyek berlisensi komersial adalah area abu-abu ToS/tanggung jawab.
+- **Redundan:** pengguna dapat menjalankan yt-dlp sendiri dan mengarahkan `transcribe_audio` ke file yang dihasilkan.
+
+**Alternatif:** didokumentasikan sebagai resep (jalankan yt-dlp, lalu transkrip file) di README / TROUBLESHOOTING, alih-alih alat yang dipelihara — alur kerja tetap tersedia tanpa memiliki dependensi atau permukaan serangan.
 
 ---
 

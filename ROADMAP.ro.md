@@ -1,6 +1,6 @@
 # whisper-windows-mcp — Foaie de parcurs
 
-Versiunea curentă: **v2.4.0**
+Versiunea curentă: **v2.5.0**
 
 ---
 
@@ -140,96 +140,114 @@ O trecere de securitate/robustețe; migrarea la Bun planificată a fost mutată 
 
 ---
 
-## Planificat — v2.5.0: Migrare la Bun
+## Planificat — v2.5.0: Server de model persistent
 
-Migrează runtime-ul de la Node.js la [Bun](https://bun.sh).
+Menține modelul Whisper rezident între transcrieri în loc să-l reîncarci la fiecare invocare.
 
-Deoarece Claude Desktop pornește serverul MCP din nou la fiecare pornire de sesiune, timpul de pornire este pe calea critică. Bun rulează TypeScript nativ fără pas de compilare, pornește semnificativ mai rapid decât Node și are I/O mai rapid.
+Acesta este cel mai mare câștig de debit disponibil. whisper-cli este unic: reîncarcă modelul complet la fiecare apel, iar v2.4.0 a măsurat acea reîncărcare la ~110s pe un GPU cu memorie limitată — o taxă fixă plătită per fișier, independentă de lungimea audio. Pentru sarcinile de lot și de arhivă domină timpul de execuție mai mult decât transcrierea în sine.
 
-**Ce se schimbă:**
-- Elimină pasul de build `tsc` și directorul `dist/`
-- Utilizatorii rulează direct codul sursă TypeScript
-- `tsconfig.json` devine opțional
-- Scripturi `package.json` actualizate
-- Flux de lucru publicare npm actualizat
+**Abordare:** rulează `whisper-server` (HTTP) livrat cu whisper.cpp ca un singur proces de lungă durată cu modelul păstrat în memorie. Serverul MCP trimite fiecare transcriere către el prin localhost și primește rezultatele înapoi fără a plăti din nou costul de reîncărcare.
 
-**Ce nu se schimbă:**
-- Codul sursă `src/index.ts` — Bun este compatibil cu TypeScript existent și API-urile Node.js integrate
-- Tot comportamentul instrumentelor și formatele de ieșire
-- Configurația Claude Desktop pentru utilizatorii finali
-
----
-
-## Planificat — v2.6.0: Formate de ieșire îmbunătățite pentru integrarea instrumentelor externe
-
-Suport extins pentru formate de ieșire destinat fluxurilor de lucru de analiză și integrare din aval. Domeniul exact va fi definit pe baza feedback-ului utilizatorilor după v2.3.0.
-
----
-
-## Planificat — v2.7.0: Modul de transcriere live din microfon
-
-Transcriere în timp real din intrare microfon live. Transmite audio de la un dispozitiv de înregistrare selectat la whisper în bucăți, returnând segmente de transcriere continue pe măsură ce se finalizează.
+**Reconciliere cu „o singură instanță whisper în orice moment":** principiul este păstrat, mecanismul evoluează. Serverul rezident *devine* singura instanță; blocarea proceselor se schimbă din „nu crea niciodată un al doilea whisper-cli" în „serializează cererile față de singurul server rezident". Nu se introduce nicio concurență.
 
 **Constrângeri de proiectare:**
-- Selecția dispozitivului trebuie să fie explicită — fără captare silențioasă a dispozitivului implicit
-- Utilizatorul trebuie să poată opri fluxul printr-o interacțiune Claude Desktop
-- Nu trebuie să intre în conflict cu constrângerea unei singure instanțe whisper simultan
-- Compromisul latență vs precizie trebuie să fie configurabil de utilizator
+- Ciclu de viață explicit: start / stop / status, cu o verificare de sănătate. Serverul nu este pornit niciodată în tăcere ca efect secundar al unui apel fără legătură.
+- Legat doar la localhost — niciodată o interfață rutabilă. Fără expunere în rețea (coerent cu principiul local-prioritar și cu întărirea din v2.4.0).
+- Rezervă grațioasă: dacă serverul nu rulează, transcrierea funcționează în continuare prin calea whisper-cli unică existentă. Serverul este o optimizare, nu o dependență obligatorie.
+- `switch_model` reîncarcă modelul în serverul rezident (tot mult mai ieftin amortizat decât reîncărcarea per fișier).
+- Barierele de confidențialitate și consimțământ sunt neschimbate — se află deasupra mecanismului de transcriere.
+- Selectarea portului cu gestionarea coliziunilor; închidere curată la SIGINT/SIGTERM alături de curățarea existentă a fișierelor temporare.
 
-**Status:** Faza de proiectare. Depinde de un API de streaming stabil în whisper.cpp.
+**Status — Faza 1 ✅ implementată (în așteptarea lansării):** instrumentul `whisper_server` (`start` / `stop` / `status`); `transcribe_audio` și `transcribe_batch` în mod blocant sunt direcționate prin serverul rezident prin localhost (`127.0.0.1`, verificat față de API-ul HTTP actual al `whisper-server` din whisper.cpp); `switch_model` schimbă la cald modelul rezident prin `POST /load` fără repornire; garda de expirare în prim-plan este sărită în modul server (nicio reîncărcare de plătit); `check_config` raportează starea serverului; serverul deținut este oprit la închidere pentru a elibera VRAM. Regula un-singur-motor / VRAM-partajat este aplicată cu o protecție dură în calea de lansare detașată plus refuzuri prietenoase: cât timp serverul este pornit, sarcinile în fundal, `start_batch`, `generate_subtitles`, ieșirea `lrc`/`csv` și opțiunile per cerere pe care API-ul HTTP nu le onorează (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration` etc.) sunt refuzate cu un mesaj „oprește serverul mai întâi" în loc să degradeze în tăcere. Configurare: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (implicit 8571, doar localhost).
+
+**Status — Faza 2 (planificată):** direcționează fundal/`start_batch` prin serverul rezident. Acesta este câștigul mai mare de arhivă/debit și necesită rescrierea stratului de sarcini/coadă în jurul cererilor HTTP în loc de PID-uri detașate (progres fără PID, anulare). Reevaluat după ce Faza 1 este livrată.
 
 ---
 
-## Planificat — Versiuni viitoare
+## Planificat — v2.6.0: TinyDiarize (schimbări de vorbitor pe mono, zero dependențe suplimentare)
 
-### TinyDiarize
-Suport pentru indicatorul `--tinydiarize` cu variante de model care suportă `tdrz` (ex.: `large-v2-tdrz`). Spre deosebire de indicatorul `--diarize` stereo, TinyDiarize funcționează pe înregistrări mono. Necesită descărcarea unui variant de model special. Precizie mai mică decât diarizarea bazată pe pyannote, dar zero dependențe suplimentare în afara fișierului model.
+Suport `--tinydiarize` cu variante de model activate `tdrz` (ex.: `ggml-small.en-tdrz.bin`). Spre deosebire de indicatorul stereo `--diarize` (v2.2.0), TinyDiarize marchează schimbările de vorbitor pe înregistrări **mono** și nu necesită nimic în afara fișierului model — fără Python, fără serviciu extern.
 
-**Status:** Planificat. Depinde de `download_model` care suportă variantele de model tdrz.
+**Domeniu:**
+- Adaugă variantele de model `tdrz` în `MODEL_REGISTRY` astfel încât `download_model` să le poată prelua din spațiile de nume Hugging Face de încredere existente.
+- Conectează o opțiune `tinydiarize` prin `buildArgs` și `spawnDetached` astfel încât să funcționeze în modurile blocant, fundal și lot.
 
-### Transcriere URL YouTube
-Transcriere directă din URL-uri YouTube prin yt-dlp. Descarcă audio și transcrie într-un singur pas. Necesită yt-dlp instalat și în PATH.
+**Status:** ✅ Implementat (în așteptarea lansării) — parametrul `tinydiarize` în `transcribe_audio` și `generate_subtitles` (funcționează în modurile blocant și fundal), `--tinydiarize` conectat prin ambele constructoare de argumente și `small.en-tdrz` adăugat în `MODEL_REGISTRY` pentru `download_model`. Pe-etos: local-prioritar, zero dependențe suplimentare.
 
-**Constrângere de proiectare:** yt-dlp este opțional. Instrumentul trebuie să degradeze elegant cu instrucțiuni clare de instalare dacă nu este găsit. Fără modificări ale funcționalității de bază pentru utilizatorii care nu au nevoie de aceasta.
+---
 
-### Instrumente flux de lucru proiect video
-Pentru utilizatorii care gestionează proiecte mari de editare video cu directoare de clipuri sursă și editate:
+## Planificat — v2.7.0: Căutare transcrieri la nivel de proiect
 
-1. Scanează directorul sursă și subdirectorul de clipuri
-2. Potrivire fuzzy a transcrierilor clipurilor editate față de transcrierile sursă pentru a localiza punctele de origine
-3. Afișează nume de fișiere descriptive sugerate de Claude bazate pe conținutul transcrierii, necesitând confirmarea explicită a utilizatorului înainte de orice redenumire
-4. Căutare transcrieri în directorul proiectului cu rezultate în coduri de timp
+Un instrument independent pentru a căuta o frază sau un tipar în fiecare transcriere dintr-un director de proiect și a returna potrivirile cu fișierul sursă și codul de timp. Descompus din fluxul de lucru mai amplu de proiect video (vezi „Mai târziu / În considerare") — această jumătate este utilă independent, cu risc scăzut și puțin dependentă de API: căutarea rulează local, iar Claude este implicat doar când utilizatorul revizuiește rezultatele.
+
+**Status:** Planificat.
+
+---
+
+## Planificat — v2.8.0: Formate de ieșire îmbunătățite și integrare
+
+Ieșire extinsă pentru fluxurile de lucru de analiză și integrare din aval. Un decalaj concret de închis: ieșirea JSON nu este momentan suportată în modul fundal (revine la text). JSON la nivel de cuvânt pentru alinierea clipurilor și alte formate de integrare urmează să fie definite pe baza feedback-ului utilizatorilor.
+
+---
+
+## Mai târziu / În considerare
+
+Neprogramat, dar pe-etos și reevaluat pe măsură ce capacitatea permite.
+
+### Migrare la Bun
+Migrează runtime-ul de la Node.js la [Bun](https://bun.sh) pentru a reduce timpul de pornire la rece al serverului MCP și a elimina pasul de build `tsc` (sursa rulează direct). Retrogradat din fostul său loc v2.5.0: cu costul de reîncărcare a modelului per invocare fiind adevăratul blocaj (vezi v2.5.0 mai sus), reducerea timpului de pornire al Node este un câștig marginal, iar maturitatea Bun-pe-Windows plus o schimbare a modelului de distribuție implică risc. Merită făcut eventual ca o optimizare opțională, nu ca o prioritate.
+
+### Flux de lucru redenumire și potrivire proiect video
+Jumătatea mai grea a instrumentelor de proiect, odată ce Căutarea transcrierilor la nivel de proiect (v2.7.0) este livrată: potrivire fuzzy a transcrierilor clipurilor editate față de transcrierile sursă pentru a localiza punctele de origine și afișarea numelor de fișiere descriptive sugerate de Claude.
 
 **Constrângeri de proiectare:**
 - Fișierele sursă nu sunt **niciodată redenumite sau modificate**
 - Toate redenumirile necesită **confirmarea explicită a utilizatorului**
-- Căutarea este un instrument independent, utilizabil independent
 - Analiza și potrivirea au loc local — Claude este invocat doar când utilizatorul revizuiește rezultatele, minimizând apelurile API
 
 **Status:** Faza de proiectare.
 
+### Curățare transcrieri bazată pe reguli
+Post-procesare locală, deterministă — eliminarea cuvintelor de umplutură și a pornirilor false, controlată de utilizator. Cea mai valoroasă pentru utilizatorii modului de confidențialitate, unde transcrierea nu ajunge niciodată la Claude pentru curățare. Deliberat îngustă: împărțirea în paragrafe și segmentarea pe subiecte sunt lucruri pe care Claude le face deja bine pe textul returnat, iar exportul PDF/DOCX este o extindere de domeniu în generarea de documente — ambele în afara domeniului aici.
+
+**Status:** În considerare.
+
 ### Diarizare vorbitori (pyannote-audio)
-Diarizare completă mono cu etichete ID vorbitor — marchează tranzițiile vorbitorilor pe toată înregistrarea indiferent de configurația canalelor. Diferit de indicatorul `--diarize` stereo integrat (v2.2.0) și TinyDiarize.
+Diarizare completă mono cu etichete ID vorbitor pe toată înregistrarea. Diferit de indicatorul stereo `--diarize` integrat (v2.2.0) și TinyDiarize (v2.6.0).
 
-**Implementare:** Necesită [pyannote-audio](https://github.com/pyannote/pyannote-audio) — bibliotecă bazată pe Python cu cerință de token acces modele Hugging Face. Stivă de dependențe complet separată.
+**Implementare:** necesită [pyannote-audio](https://github.com/pyannote/pyannote-audio) — o bibliotecă Python cu cerință de token de acces Hugging Face, o stivă de dependențe complet separată. Deprioritizat: intră în conflict cu etosul local-prioritar / zero-dependențe, iar TinyDiarize acoperă deja cazul mono zero-dependențe. Dacă este urmărit, se livrează ca un add-on avansat opțional cu propriile documente de configurare, niciodată în pachetul principal.
 
-**Status:** Funcție avansată opțională cu propria documentație de configurare. Nu este inclusă în pachetul principal.
+**Status:** Deprioritizat / opțional.
 
 ### Traducere în limbi non-engleze
-Indicatorul `--translate` al Whisper țintește doar engleza. Suportarea limbilor țintă arbitrare necesită un API de traducere extern sau un model de traducere local.
+Indicatorul `--translate` al Whisper țintește doar engleza. Limbile țintă arbitrare necesită un API de traducere extern sau un model de traducere local.
 
-**Opțiuni luate în considerare:** LibreTranslate (auto-găzduit, local prioritar), traducere LLM local sau documentație explicită în afara domeniului.
+**Opțiuni luate în considerare:** LibreTranslate (auto-găzduit, local-prioritar), traducere LLM local sau documentație explicită în afara domeniului.
 
-**Status:** Amânat în așteptarea deciziei de proiectare privind local prioritar vs dependența API.
+**Status:** Amânat în așteptarea unei decizii local-prioritar vs dependență-API.
 
-### Curățare și formatare transcrieri
-Pipeline de post-procesare:
-- Eliminarea cuvintelor de umplutură și a pornirilor false (opțional, controlat de utilizator)
-- Pauze de paragraf la granițele naturale ale subiectelor
-- Formatare conștientă de vorbitor combinată cu ieșire diarizare
-- Export în PDF sau DOCX
+---
 
-**Status:** Planificat. Varianta conștientă de vorbitor depinde de diarizare.
+## În afara domeniului / Neplanificat
+
+Funcții excluse intenționat, consemnate aici astfel încât decizia să fie explicită și să nu reapară în mod repetat.
+
+### Transcriere live din microfon — neplanificată
+Transcrierea în timp real dintr-un microfon live era anterior programată pentru v2.7.0. Eliminată deoarece intră în conflict cu designul de bază al proiectului:
+- **Nepotrivire de arhitectură:** MCP este cerere/răspuns, nu streaming. Captura live ar necesita fie interogare continuă (consumă buget API), fie un apel blocant de lungă durată care atinge garda de expirare în prim-plan din v2.4.0.
+- **Principii o-singură-instanță / minimizare-API:** returnarea segmentelor continue către Claude este un flux constant de apeluri de instrument — opusul „funcțional pentru utilizatorii planului gratuit" — iar un proces de streaming de lungă durată solicită blocarea proceselor.
+- **Dependență externă:** ar depinde de un API de streaming stabil în whisper.cpp care nu ne aparține pentru a-l programa.
+
+Subtitrarea live este o categorie de produs distinctă (latență scăzută, gestionarea dispozitivelor, VAD) față de un instrument de transcriere fișier/lot. Utilizatorii care au nevoie de ea sunt mai bine serviți de un instrument dedicat în timp real.
+
+### Transcriere URL YouTube (yt-dlp) — neplanificată ca instrument inclus
+YouTube-la-transcriere direct prin yt-dlp era anterior planificat. Abandonat ca funcție de primă clasă deoarece:
+- **Suprafață de securitate:** adaugă preluarea de URL-uri arbitrare și un apel de subproces cu intrare controlată de utilizator, inversând întărirea din v2.4.0 care a redus exact acea suprafață.
+- **Întreținere:** yt-dlp se strică frecvent pe măsură ce YouTube se schimbă — un angajament de întreținere continuu.
+- **Local-prioritar și licențiere:** achiziția de conținut din rețea se află în afara domeniului local-prioritar, iar includerea unui descărcător într-un proiect cu licență comercială este o zonă gri de ToS/răspundere.
+- **Redundant:** utilizatorii pot rula yt-dlp ei înșiși și îndrepta `transcribe_audio` către fișierul rezultat.
+
+**Alternativă:** documentat ca o rețetă (rulează yt-dlp, apoi transcrie fișierul) în README / TROUBLESHOOTING, în loc de un instrument întreținut — fluxul de lucru rămâne disponibil fără a deține dependența sau suprafața de atac.
 
 ---
 

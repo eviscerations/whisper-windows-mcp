@@ -23,6 +23,7 @@ import { promisify } from "util";
 import { randomUUID } from "crypto";
 import {
   coerceNum, writeJsonAtomic, estimateWordCount, opKeyFor, isInsideDir,
+  isValidJobId, isValidBatchId,
   extractTranscriptFromLog, parseLastTimestamp, formatDuration, estimateSec, estimateTime,
 } from "./lib.js";
 
@@ -38,6 +39,28 @@ let WHISPER_MODEL =
   process.env.WHISPER_MODEL ?? "C:\\whisper\\models\\ggml-base.en.bin";
 const FFMPEG_PATH =
   process.env.FFMPEG_PATH ?? "ffmpeg";
+
+// Windows system binaries we invoke implicitly (never at the user's request) are called by
+// absolute path so a same-named executable planted in an earlier PATH directory cannot shadow
+// them. Falls back to the conventional location if the environment does not expose SystemRoot.
+const SYSTEM_ROOT = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+const TASKLIST_EXE = join(SYSTEM_ROOT, "System32", "tasklist.exe");
+const WMIC_EXE = join(SYSTEM_ROOT, "System32", "wbem", "WMIC.exe");
+
+// --- Persistent model server (whisper-server) ------------------------------
+// Optional resident-model mode: run whisper.cpp's whisper-server so the model stays
+// loaded across transcriptions, eliminating the per-invocation reload cost (~110s on a
+// constrained GPU). Started and stopped EXPLICITLY (whisper_server tool), never as an
+// always-on daemon: the resident model holds VRAM for the server's entire lifetime, so on
+// a shared GPU it has to be a deliberate start-work-stop cycle to hand the card back to
+// other processes. Bound to localhost only — never a routable interface.
+const WHISPER_SERVER_PATH =
+  process.env.WHISPER_SERVER_PATH ?? join(dirname(WHISPER_CLI_PATH), "whisper-server.exe");
+const WHISPER_SERVER_HOST = "127.0.0.1";
+const WHISPER_SERVER_PORT = (() => {
+  const n = parseInt(process.env.WHISPER_SERVER_PORT ?? "8571", 10);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : 8571;
+})();
 
 const SYSTEM_THREADS = cpus().length;
 const DEFAULT_THREADS = Math.max(2, Math.floor(SYSTEM_THREADS / 2));
@@ -75,12 +98,23 @@ function resolveGpuDevice(arg: unknown): number | undefined {
 // background whisper-cli still needs its WAV). Cleaned best-effort on graceful shutdown.
 const activeTempFiles = new Set<string>();
 
+// Resident whisper-server this process owns (null until started via the whisper_server tool).
+// Tracked so we can hard-kill it on shutdown and free the VRAM it holds.
+let serverChild: ReturnType<typeof spawn> | null = null;
+let serverModel: string | null = null;   // model path the resident server currently holds
+let serverStartedAt = 0;                  // epoch ms — for uptime reporting
+
 function gracefulShutdown(signal: string): void {
   let cleaned = 0;
   for (const f of activeTempFiles) {
     try { if (existsSync(f)) { unlinkSync(f); cleaned++; } } catch { /* best effort */ }
   }
-  console.error(`whisper-windows-mcp: ${signal} — cleaned ${cleaned} blocking temp file(s), exiting.`);
+  // Kill the resident server we own so its VRAM is released rather than leaked on exit.
+  let killedServer = false;
+  if (serverChild && !serverChild.killed) {
+    try { serverChild.kill(); killedServer = true; } catch { /* best effort */ }
+  }
+  console.error(`whisper-windows-mcp: ${signal} — cleaned ${cleaned} blocking temp file(s)${killedServer ? ", stopped resident server" : ""}, exiting.`);
   process.exit(0);
 }
 
@@ -353,6 +387,43 @@ function validateInputPath(filePath: string): string | null {
   return null;
 }
 
+/**
+ * Validate and resolve a user-supplied model reference to an absolute path guaranteed
+ * to live inside the configured models directory. Accepts a bare filename (resolved
+ * against the models dir) or a full path. Returns { path } on success or { error } with
+ * a caller-facing message. Shared by switch_model and the transcribe_audio `model`
+ * override so the models-directory containment guarantee cannot be sidestepped by
+ * passing a model path straight to a transcription tool.
+ */
+function resolveModelPath(modelInput: string): { path: string } | { error: string } {
+  const trimmed = modelInput.trim();
+  if (!trimmed.endsWith(".bin")) {
+    return { error: `Invalid model: "${trimmed}"\nModel files must end in .bin` };
+  }
+  if (UNSAFE_PATH_RE.test(trimmed)) {
+    return { error: `Invalid path: "${trimmed}"\nPaths containing ".." or UNC paths are not allowed.` };
+  }
+  const modelsDir = dirname(WHISPER_MODEL);
+  // Normalize to an absolute, canonical path first so the containment check and every
+  // downstream use operate on a clean path — never a relative-to-cwd or sibling-prefix string.
+  const resolvedPath = resolve(
+    trimmed.includes("\\") || trimmed.includes("/")
+      ? trimmed
+      : join(modelsDir, trimmed)
+  );
+  if (!isInsideDir(resolvedPath, modelsDir)) {
+    return { error: `Security error: model must be within the configured models directory (${modelsDir}).` };
+  }
+  if (!existsSync(resolvedPath)) {
+    return {
+      error:
+        `Model not found: ${resolvedPath}\n\n` +
+        `Use list_models to see installed models, or download_model to install a new one.`,
+    };
+  }
+  return { path: resolvedPath };
+}
+
 
 /**
  * Check whether a whisper-cli.exe process is already running.
@@ -361,7 +432,7 @@ function validateInputPath(filePath: string): string | null {
 async function isWhisperRunning(): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync(
-      "tasklist",
+      TASKLIST_EXE,
       ["/FI", "IMAGENAME eq whisper-cli.exe", "/NH"],
       { windowsHide: true }
     );
@@ -440,6 +511,15 @@ async function spawnDetached(
   onExit?: () => void,
   privacyMode = false
 ): Promise<{ jobId: string; pid: number }> {
+  // Hard backstop for the one-engine / shared-VRAM guarantee: never spawn a one-shot
+  // whisper-cli job while the resident server holds the GPU. Handlers refuse earlier with
+  // friendlier messages; this catches every remaining path (e.g. a batch advancing mid-flight).
+  if (await isServerHealthy()) {
+    throw new Error(
+      "Cannot start a one-shot whisper-cli job while the resident model server is running — " +
+      "they would contend for the GPU. Stop the server first with whisper_server action=\"stop\"."
+    );
+  }
   ensureJobsDir();
 
   const jobId = `job_${Date.now()}_${randomUUID().slice(0, 8)}`;
@@ -490,6 +570,7 @@ async function spawnDetached(
   if (extraOpts.offsetT !== undefined) args.push("--offset-t", String(extraOpts.offsetT));
   if (extraOpts.duration !== undefined) args.push("--duration", String(extraOpts.duration));
   if (extraOpts.diarize) args.push("--diarize");
+  if (extraOpts.tinyDiarize) args.push("--tinydiarize");
   if (extraOpts.vadModel && existsSync(extraOpts.vadModel)) args.push("--vad", "--vad-model", extraOpts.vadModel);
   if (extraOpts.wordTimestamps) {
     args.push("--max-len", "1", "--split-on-word");
@@ -557,7 +638,7 @@ async function spawnDetached(
 async function isPidRunning(pid: number): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync(
-      "tasklist",
+      TASKLIST_EXE,
       ["/FI", `PID eq ${pid}`, "/NH"],
       { windowsHide: true }
     );
@@ -565,6 +646,150 @@ async function isPidRunning(pid: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Persistent model server helpers
+// ---------------------------------------------------------------------------
+function serverBaseUrl(): string {
+  return `http://${WHISPER_SERVER_HOST}:${WHISPER_SERVER_PORT}`;
+}
+
+/** True if a whisper-server answers on our configured port (ours or an adopted orphan). */
+async function isServerHealthy(timeoutMs = 2000): Promise<boolean> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    await fetch(serverBaseUrl() + "/", { signal: ctl.signal });
+    return true; // any HTTP response means it is listening
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** Poll until the server answers or the deadline passes (model load can take a while). */
+async function waitForServer(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isServerHealthy(2000)) return true;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
+}
+
+/** Detect any whisper-server.exe process (including an orphan not started by us). */
+async function isServerProcessRunning(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      TASKLIST_EXE,
+      ["/FI", "IMAGENAME eq whisper-server.exe", "/NH"],
+      { windowsHide: true }
+    );
+    return stdout.toLowerCase().includes("whisper-server.exe");
+  } catch {
+    return false;
+  }
+}
+
+// Per-call options the whisper-server HTTP API does NOT reliably honor (probe-confirmed:
+// unknown form fields are silently ignored). We refuse rather than drop them silently,
+// preserving the explicit-control guarantee. Keyed by WhisperOptions field → tool arg name.
+const SERVER_UNSUPPORTED_OPTS: Array<[keyof WhisperOptions, string]> = [
+  ["beamSize", "beam_size"], ["bestOf", "best_of"], ["wordTimestamps", "word_timestamps"],
+  ["diarize", "diarize"], ["tinyDiarize", "tinydiarize"], ["vadModel", "vad_model"],
+  ["offsetT", "offset_t"], ["duration", "duration"], ["maxLen", "max_segment_length"],
+  ["splitOnWord", "split_on_word"], ["processors", "processors"], ["gpuDevice", "gpu_device"],
+  ["conditionOnPrevText", "condition_on_prev_text"],
+];
+function unsupportedServerOpts(opts: Partial<WhisperOptions>): string[] {
+  return SERVER_UNSUPPORTED_OPTS
+    .filter(([k]) => opts[k] !== undefined && opts[k] !== false)
+    .map(([, label]) => label);
+}
+
+function serverPadTime(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.round((sec - Math.floor(sec)) * 1000);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+}
+
+/**
+ * Transcribe a WAV through the resident server. Returns the subtitle document verbatim
+ * for srt/vtt, or a transcript built from verbose_json for text/timestamps/json.
+ * Only the parameters the HTTP API honors are forwarded (see SERVER_UNSUPPORTED_OPTS);
+ * callers guard advanced flags before reaching here.
+ */
+async function serverTranscribe(
+  wavPath: string, outputFormat: OutputFormat, language: string,
+  opts: Partial<WhisperOptions>
+): Promise<string> {
+  const rf = outputFormat === "srt" ? "srt"
+    : outputFormat === "vtt" ? "vtt"
+    : "verbose_json"; // text / timestamps / json are all derived from verbose_json
+
+  const fd = new FormData();
+  fd.set("file", new Blob([readFileSync(wavPath)]), basename(wavPath));
+  fd.set("response_format", rf);
+  fd.set("language", language === "auto" ? "auto" : language);
+  if (opts.translate) fd.set("translate", "true");
+  if (opts.temperature !== undefined) fd.set("temperature", String(opts.temperature));
+  if (opts.prompt) fd.set("prompt", opts.prompt);
+  if (opts.noSpeechThold !== undefined) fd.set("no_speech_thold", String(opts.noSpeechThold));
+
+  const res = await fetch(serverBaseUrl() + "/inference", { method: "POST", body: fd });
+  const body = await res.text();
+  if (!res.ok) {
+    throw new Error(`whisper-server /inference returned HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  if (rf === "srt" || rf === "vtt") return body.trim();
+
+  let data: any;
+  try { data = JSON.parse(body); }
+  catch { throw new Error(`whisper-server returned a non-JSON response: ${body.slice(0, 300)}`); }
+
+  if (outputFormat === "json") return JSON.stringify(data, null, 2);
+
+  const segs: any[] = Array.isArray(data.segments) ? data.segments : [];
+  if (outputFormat === "text") {
+    const joined = segs.map((s) => String(s.text ?? "").trim()).filter(Boolean).join(" ").trim();
+    return joined || String(data.text ?? "").trim();
+  }
+  // "timestamps"
+  return segs
+    .map((s) => `[${serverPadTime(Number(s.start) || 0)} --> ${serverPadTime(Number(s.end) || 0)}]  ${String(s.text ?? "").trim()}`)
+    .join("\n");
+}
+
+/** Swap the resident server's model without a restart via POST /load. */
+async function serverLoadModel(modelPath: string): Promise<void> {
+  const fd = new FormData();
+  fd.set("model", modelPath);
+  const res = await fetch(serverBaseUrl() + "/load", { method: "POST", body: fd });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`whisper-server /load returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+}
+
+/**
+ * Refusal response for an operation that would need one-shot whisper-cli while the resident
+ * server holds the GPU. Phase 1 wires only the blocking transcribe path through the server.
+ */
+function serverBusyRefusal(what: string): { content: { type: "text"; text: string }[]; isError: true } {
+  return {
+    content: [{
+      type: "text",
+      text:
+        `⛔ The resident model server is running, and ${what} is not routed through it yet.\n\n` +
+        `Running one would spawn a second engine and contend for VRAM on the same GPU. ` +
+        `Stop the server first to free the card:\n  whisper_server with action="stop"\n\n` +
+        `then re-run. (Server-backed background/batch is planned for a later release.)`,
+    }],
+    isError: true,
+  };
 }
 
 
@@ -886,7 +1111,7 @@ interface GpuInfo {
 async function detectGpus(): Promise<GpuInfo[]> {
   try {
     const { stdout } = await execFileAsync(
-      "wmic",
+      WMIC_EXE,
       ["path", "win32_VideoController", "get", "name,AdapterRAM", "/format:csv"],
       { windowsHide: true }
     );
@@ -944,6 +1169,7 @@ const MODEL_REGISTRY: ModelEntry[] = [
   { name: "medium",              filename: "ggml-medium.bin",              sizeMb: 1500, multilingual: true,  quantized: false, useCase: "Multilingual, high accuracy",                         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin" },
   { name: "large-v3",            filename: "ggml-large-v3.bin",            sizeMb: 2900, multilingual: true,  quantized: false, useCase: "Best accuracy, multilingual — requires 6GB+ VRAM",   url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin" },
   { name: "large-v3-turbo",      filename: "ggml-large-v3-turbo.bin",      sizeMb: 1600, multilingual: true,  quantized: false, useCase: "~6x faster than large-v3, minimal accuracy loss — RECOMMENDED for English GPU batch work", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" },
+  { name: "small.en-tdrz",       filename: "ggml-small.en-tdrz.bin",       sizeMb: 465,  multilingual: false, quantized: false, useCase: "TinyDiarize — mono speaker-turn detection (English). Use with tinydiarize=true", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-tdrz.bin" },
   { name: "base.en-q5_1",        filename: "ggml-base.en-q5_1.bin",        sizeMb: 57,   multilingual: false, quantized: true,  useCase: "Tiny English model, CPU-friendly",                   url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin" },
   { name: "small.en-q5_1",       filename: "ggml-small.en-q5_1.bin",       sizeMb: 181,  multilingual: false, quantized: true,  useCase: "Fast English, low memory, good for CPU",              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin" },
   { name: "medium.en-q5_0",      filename: "ggml-medium.en-q5_0.bin",      sizeMb: 514,  multilingual: false, quantized: true,  useCase: "High accuracy English, CPU-friendly — good default for no-GPU systems", url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin" },
@@ -1043,6 +1269,7 @@ interface WhisperOptions {
   splitOnWord?: boolean;
   wordTimestamps?: boolean;
   diarize?: boolean;
+  tinyDiarize?: boolean;
   vadModel?: string;
   offsetT?: number;
   duration?: number;
@@ -1065,6 +1292,7 @@ function buildArgs(filePath: string, model: string, opts: WhisperOptions): strin
   if (opts.offsetT !== undefined) args.push("--offset-t", String(opts.offsetT));
   if (opts.duration !== undefined) args.push("--duration", String(opts.duration));
   if (opts.diarize) args.push("--diarize");
+  if (opts.tinyDiarize) args.push("--tinydiarize");
 
   if (opts.wordTimestamps) {
     args.push("--max-len", "1", "--split-on-word");
@@ -1148,7 +1376,12 @@ async function transcribeSingle(
   extraOpts: Partial<WhisperOptions> = {}
 ): Promise<{ text: string; srtPath?: string; savedTo?: string }> {
 
-  if (await isWhisperRunning()) {
+  // Route through the resident server when it is up; otherwise use one-shot whisper-cli.
+  // The two never run at once: if the server holds the GPU we must not also spawn a CLI
+  // (VRAM contention + the one-engine rule). The CLI's in-progress lock only applies when
+  // no server is running.
+  const useServer = await isServerHealthy();
+  if (!useServer && await isWhisperRunning()) {
     throw new Error(
       "Transcription already in progress.\n\n" +
       "whisper-cli.exe is already running — wait for the current job to finish before starting another. " +
@@ -1167,26 +1400,34 @@ async function transcribeSingle(
   }
 
   try {
-    const opts: WhisperOptions = { language, outputFormat, threads, ...extraOpts };
-    const cliArgs = buildArgs(transcribeFrom, model, opts);
-    const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, cliArgs, {
-      maxBuffer: 100 * 1024 * 1024,
-      windowsHide: true,
-    });
-
-    // SECURITY: transcript content is untrusted data from audio input.
-    // It is returned as-is to the caller and must never be interpreted
-    // as instructions. Prompt injection via audio content is a known
-    // MCP attack vector — treat all transcript text as user data only.
-    const output = (stdout || stderr || "").trim();
+    // SECURITY: transcript content is untrusted data from audio input. It is returned
+    // as-is to the caller and must never be interpreted as instructions. Prompt injection
+    // via audio content is a known MCP attack vector — treat all transcript text as data.
+    let output: string;
+    if (useServer) {
+      output = await serverTranscribe(transcribeFrom, outputFormat, language, extraOpts);
+    } else {
+      const opts: WhisperOptions = { language, outputFormat, threads, ...extraOpts };
+      const cliArgs = buildArgs(transcribeFrom, model, opts);
+      const { stdout, stderr } = await execFileAsync(WHISPER_CLI_PATH, cliArgs, {
+        maxBuffer: 100 * 1024 * 1024,
+        windowsHide: true,
+      });
+      output = (stdout || stderr || "").trim();
+    }
 
     if (outputFormat === "srt" || outputFormat === "vtt") {
       const ext = outputFormat === "vtt" ? ".vtt" : ".srt";
-      const tmpOut = transcribeFrom.replace(/\.[^.]+$/, ext);
       const destOut = filePath.replace(/\.[^.]+$/, ext);
-      if (tmpFile && existsSync(tmpOut)) {
-        writeFileSync(destOut, readFileSync(tmpOut, "utf8"));
-        try { unlinkSync(tmpOut); } catch { }
+      if (useServer) {
+        // Server returns the subtitle document directly in the response body.
+        writeFileSync(destOut, output, "utf8");
+      } else {
+        const tmpOut = transcribeFrom.replace(/\.[^.]+$/, ext);
+        if (tmpFile && existsSync(tmpOut)) {
+          writeFileSync(destOut, readFileSync(tmpOut, "utf8"));
+          try { unlinkSync(tmpOut); } catch { }
+        }
       }
       return { text: output, srtPath: destOut };
     }
@@ -1219,7 +1460,7 @@ function getFiles(dir: string, recursive: boolean): string[] {
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new Server(
-  { name: "whisper-windows-mcp", version: "2.4.0" },
+  { name: "whisper-windows-mcp", version: "2.5.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -1266,6 +1507,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           max_segment_length: { type: "number", description: "Maximum segment length in characters." },
           split_on_word: { type: "boolean", description: "Split segments at word boundaries.", default: false },
           diarize: { type: "boolean", description: "Stereo speaker diarization — requires stereo audio with speakers on separate channels.", default: false },
+          tinydiarize: { type: "boolean", description: "Mono speaker-turn detection (TinyDiarize). Marks '[SPEAKER_TURN]' at speaker changes on single-channel audio. Requires a tdrz model (small.en-tdrz) — download it with download_model and activate with switch_model first.", default: false },
           vad_model: { type: "string", description: "Absolute path to a Silero VAD model .bin file. Strips silence before transcription." },
           offset_t: { type: "number", description: "Start transcription at this offset in milliseconds." },
           duration: { type: "number", description: "Process only this many milliseconds of audio from offset_t." },
@@ -1356,6 +1598,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           beam_size: { type: "number", description: "Beam search width. Higher = more accurate, slower. Default 5." },
           best_of: { type: "number", description: "Candidate sequences evaluated. Default 5." },
           diarize: { type: "boolean", description: "Stereo speaker diarization. Requires stereo audio.", default: false },
+          tinydiarize: { type: "boolean", description: "Mono speaker-turn detection (TinyDiarize). Requires a tdrz model (small.en-tdrz) activated via switch_model.", default: false },
           vad_model: { type: "string", description: "Path to Silero VAD model .bin. Strips silence before transcription." },
           gpu_device: { type: "number", description: "GPU/Vulkan device index for multi-GPU systems. Overrides the WHISPER_GPU_DEVICE env default. Check whisper-cli's startup log for the index that lists your target card." },
         },
@@ -1476,6 +1719,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["model_name"],
       },
     },
+    {
+      name: "whisper_server",
+      description:
+        "Start, stop, or check the persistent whisper model server. When running, the active model stays " +
+        "resident in VRAM and every transcribe_audio / transcribe_batch call is served over localhost without " +
+        "reloading it — eliminating the per-file model-load cost (a large speedup for many short files). " +
+        "⚠️ The resident model holds GPU VRAM for the server's entire lifetime, so start it deliberately, do your " +
+        "work, then stop it to hand the GPU back to other applications. While it is running, background jobs, " +
+        "start_batch, generate_subtitles, and lrc/csv or advanced per-call options are refused (they need the " +
+        "one-shot CLI and would contend for the GPU) — stop the server to use those. Bound to localhost only.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["start", "stop", "status"],
+            description: "start = launch the server with the active model resident; stop = shut it down and free VRAM; status = report whether it is running, the resident model, port, and uptime.",
+          },
+        },
+        required: ["action"],
+      },
+    },
   ],
 }));
 
@@ -1493,6 +1758,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try { await execFileAsync(FFMPEG_PATH, ["-version"], { windowsHide: true }); }
     catch { ffmpegStatus = "⚠️  Not found — video/non-MP3 formats require FFmpeg in PATH"; }
 
+    const serverInstalled = existsSync(WHISPER_SERVER_PATH);
+    const serverUp = await isServerHealthy();
+    const serverStatus = serverUp
+      ? `🟢 running (resident, holding VRAM) at ${serverBaseUrl()}`
+      : serverInstalled
+        ? `off — start with whisper_server action="start" (binary present)`
+        : `off — whisper-server.exe not found at ${WHISPER_SERVER_PATH}`;
+
     return {
       content: [{
         type: "text",
@@ -1503,8 +1776,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `Threads:     ${WHISPER_THREADS} of ${SYSTEM_THREADS} logical cores\n` +
           `GPU device:  ${WHISPER_GPU_DEVICE !== undefined ? `--device ${WHISPER_GPU_DEVICE} (WHISPER_GPU_DEVICE)` : "whisper-cli default (device 0)"}\n` +
           `FFmpeg:      ${ffmpegStatus}\n` +
+          `Model server: ${serverStatus}\n` +
           `Privacy mode: ${WHISPER_PRIVACY_MODE ? "✅ active (WHISPER_PRIVACY_MODE=true)" : "off"}\n\n` +
-          `Optional env vars: WHISPER_THREADS, WHISPER_GPU_DEVICE, WHISPER_FOREGROUND_MAX_SEC, FFMPEG_PATH, WHISPER_PRIVACY_MODE, WHISPER_CONSENT_ACKNOWLEDGED`,
+          `Optional env vars: WHISPER_THREADS, WHISPER_GPU_DEVICE, WHISPER_FOREGROUND_MAX_SEC, FFMPEG_PATH, WHISPER_SERVER_PATH, WHISPER_SERVER_PORT, WHISPER_PRIVACY_MODE, WHISPER_CONSENT_ACKNOWLEDGED`,
       }],
     };
   }
@@ -1517,6 +1791,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const sortBy = (args?.sort_by as string) || "duration";
 
     if (!targetPath) return { content: [{ type: "text", text: "path is required." }], isError: true };
+    const analyzePathError = validateInputPath(targetPath);
+    if (analyzePathError) return { content: [{ type: "text", text: analyzePathError }], isError: true };
     if (!existsSync(targetPath)) return { content: [{ type: "text", text: `Path not found: ${targetPath}` }], isError: true };
 
     const ffprobePath = FFMPEG_PATH.replace(/ffmpeg(\.exe)?$/i, "ffprobe$1").replace(/ffmpeg$/i, "ffprobe");
@@ -1834,48 +2110,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const modelInput = (args?.model_name as string)?.trim();
     if (!modelInput) return { content: [{ type: "text", text: "model_name is required." }], isError: true };
 
-    if (!modelInput.endsWith(".bin")) {
-      return {
-        content: [{ type: "text", text: `Invalid model: "${modelInput}"\nModel files must end in .bin` }],
-        isError: true,
-      };
+    const resolved = resolveModelPath(modelInput);
+    if ("error" in resolved) {
+      return { content: [{ type: "text", text: resolved.error }], isError: true };
     }
-
-    if (UNSAFE_PATH_RE.test(modelInput)) {
-      return {
-        content: [{ type: "text", text: `Invalid path: "${modelInput}"\nPaths containing ".." or UNC paths are not allowed.` }],
-        isError: true,
-      };
-    }
-
-    const modelsDir = dirname(WHISPER_MODEL);
-    // Normalize to an absolute, canonical path first so the containment check and
-    // every downstream use (existsSync, basename, WHISPER_MODEL assignment) operate
-    // on a clean path — never a relative-to-cwd or sibling-prefix string.
-    const resolvedPath = resolve(
-      modelInput.includes("\\") || modelInput.includes("/")
-        ? modelInput
-        : join(modelsDir, modelInput)
-    );
-
-    if (!isInsideDir(resolvedPath, modelsDir)) {
-      return {
-        content: [{ type: "text", text: `Security error: model must be within the configured models directory (${modelsDir}).` }],
-        isError: true,
-      };
-    }
-
-    if (!existsSync(resolvedPath)) {
-      return {
-        content: [{
-          type: "text",
-          text:
-            `Model not found: ${resolvedPath}\n\n` +
-            `Use list_models to see installed models, or download_model to install a new one.`,
-        }],
-        isError: true,
-      };
-    }
+    const resolvedPath = resolved.path;
 
     if (await isWhisperRunning()) {
       return {
@@ -1890,6 +2129,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const sizeMb = (statSync(resolvedPath).size / (1024 * 1024)).toFixed(0);
     const known = MODEL_REGISTRY.find(m => m.filename === newModel);
 
+    // If the resident server is up, hot-swap its model in place (POST /load) so the switch
+    // takes effect without a restart. Falls back to a warning if the reload call fails.
+    let serverNote = "";
+    if (await isServerHealthy()) {
+      try {
+        await serverLoadModel(resolvedPath);
+        serverModel = resolvedPath;
+        serverNote = `\nResident server: reloaded to ${newModel} (no restart needed).`;
+      } catch (e: any) {
+        serverNote = `\n⚠️ Resident server is running but the hot-swap failed (${e?.message || e}). Restart it with whisper_server action="stop" then "start".`;
+      }
+    }
+
     return {
       content: [{
         type: "text",
@@ -1898,9 +2150,107 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `Previous: ${previousModel}\n` +
           `Active:   ${newModel} (${sizeMb} MB)\n` +
           (known ? `Use case: ${known.useCase}\n` : "") +
+          serverNote +
           `\nThis change is session-scoped. To make it permanent, update WHISPER_MODEL in claude_desktop_config.json.`,
       }],
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // whisper_server — start / stop / status of the resident model server
+  // -------------------------------------------------------------------------
+  if (name === "whisper_server") {
+    const action = (args?.action as string) || "";
+
+    if (action === "status") {
+      const up = await isServerHealthy();
+      if (!up) {
+        const orphan = await isServerProcessRunning();
+        return { content: [{ type: "text", text:
+          `Resident model server: ⚪ not running.${orphan ? "\n\n⚠️ A whisper-server.exe process exists but isn't answering on the configured port — it may be starting up or stuck. Try whisper_server action=\"stop\"." : ""}\n\n` +
+          `Start it with whisper_server action="start" to keep the model resident and skip the per-file reload cost.` }] };
+      }
+      const uptime = serverStartedAt ? formatDuration(Math.round((Date.now() - serverStartedAt) / 1000)) : "unknown";
+      return { content: [{ type: "text", text:
+        `Resident model server: 🟢 running (holding VRAM).\n\n` +
+        `Model:   ${basename(serverModel ?? WHISPER_MODEL)}\n` +
+        `Address: ${serverBaseUrl()} (localhost only)\n` +
+        `Uptime:  ${uptime}\n\n` +
+        `transcribe_audio / transcribe_batch are served here with no model reload. ` +
+        `Stop it with whisper_server action="stop" to free the GPU for other apps.` }] };
+    }
+
+    if (action === "stop") {
+      const wasUp = await isServerHealthy() || await isServerProcessRunning();
+      if (serverChild && !serverChild.killed) {
+        try { serverChild.kill(); } catch { /* fall through to taskkill */ }
+      }
+      // Backstop: kill any lingering whisper-server.exe (e.g. an orphan we didn't spawn) so
+      // VRAM is actually released — the whole point of stopping.
+      try { await execFileAsync(join(SYSTEM_ROOT, "System32", "taskkill.exe"), ["/F", "/IM", "whisper-server.exe"], { windowsHide: true }); } catch { /* none running */ }
+      serverChild = null; serverModel = null; serverStartedAt = 0;
+      return { content: [{ type: "text", text: wasUp
+        ? `🛑 Resident model server stopped. VRAM released — the GPU is free for other applications.`
+        : `Resident model server was not running. Nothing to stop.` }] };
+    }
+
+    if (action === "start") {
+      if (await isServerHealthy()) {
+        return { content: [{ type: "text", text: `Resident model server is already running at ${serverBaseUrl()} with ${basename(serverModel ?? WHISPER_MODEL)}. Use action="status" for details.` }] };
+      }
+      const cfgErr = validatePaths();
+      if (cfgErr) return { content: [{ type: "text", text: cfgErr }], isError: true };
+      if (!existsSync(WHISPER_SERVER_PATH)) {
+        return { content: [{ type: "text", text:
+          `whisper-server.exe not found at: ${WHISPER_SERVER_PATH}\n` +
+          `It ships alongside whisper-cli.exe in the whisper.cpp build. Set WHISPER_SERVER_PATH if it lives elsewhere.` }], isError: true };
+      }
+      // A one-shot CLI job holds the GPU too — don't start a competing resident server.
+      if (await isWhisperRunning()) {
+        return { content: [{ type: "text", text: "A one-shot whisper-cli transcription is currently running. Wait for it to finish before starting the resident server." }], isError: true };
+      }
+      // Also clear any stale orphan that isn't answering, so the port is free.
+      if (await isServerProcessRunning()) {
+        try { await execFileAsync(join(SYSTEM_ROOT, "System32", "taskkill.exe"), ["/F", "/IM", "whisper-server.exe"], { windowsHide: true }); } catch { /* ignore */ }
+      }
+
+      const serverArgs = [
+        "--host", WHISPER_SERVER_HOST,
+        "--port", String(WHISPER_SERVER_PORT),
+        "-m", WHISPER_MODEL,
+        "-t", String(WHISPER_THREADS),
+      ];
+      if (WHISPER_GPU_DEVICE !== undefined) serverArgs.push("--device", String(WHISPER_GPU_DEVICE));
+
+      try {
+        const child = spawn(WHISPER_SERVER_PATH, serverArgs, { detached: false, stdio: "ignore", windowsHide: true });
+        child.on("error", () => { /* surfaced via the readiness check below */ });
+        serverChild = child;
+        // Model load into VRAM can take a while on a constrained card; wait generously.
+        const ready = await waitForServer(180_000);
+        if (!ready) {
+          try { child.kill(); } catch { }
+          try { await execFileAsync(join(SYSTEM_ROOT, "System32", "taskkill.exe"), ["/F", "/IM", "whisper-server.exe"], { windowsHide: true }); } catch { }
+          serverChild = null;
+          return { content: [{ type: "text", text:
+            `Server did not become ready within 180s. The model may be too large for available VRAM, or the binary failed to start.\n` +
+            `Model: ${basename(WHISPER_MODEL)}  Port: ${WHISPER_SERVER_PORT}` }], isError: true };
+        }
+        serverModel = WHISPER_MODEL;
+        serverStartedAt = Date.now();
+        return { content: [{ type: "text", text:
+          `🟢 Resident model server started.\n\n` +
+          `Model:   ${basename(WHISPER_MODEL)}\n` +
+          `Address: ${serverBaseUrl()} (localhost only)\n\n` +
+          `The model is now held in VRAM. transcribe_audio / transcribe_batch will use it with no per-file reload.\n` +
+          `⚠️ It keeps the GPU occupied until you run whisper_server action="stop".` }] };
+      } catch (err: any) {
+        serverChild = null;
+        return { content: [{ type: "text", text: `Failed to start whisper-server:\n\n${err?.message || String(err)}` }], isError: true };
+      }
+    }
+
+    return { content: [{ type: "text", text: `Unknown action: "${action}". Use "start", "stop", or "status".` }], isError: true };
   }
 
   // -------------------------------------------------------------------------
@@ -1908,7 +2258,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // -------------------------------------------------------------------------
   if (name === "transcribe_audio") {
     const filePath = args?.file_path as string;
-    const model = (args?.model as string) || WHISPER_MODEL;
+    // A user-supplied model override must satisfy the same models-directory containment
+    // as switch_model — otherwise it becomes a trivial way to feed whisper-cli an
+    // arbitrary file as its model, bypassing the containment guarantee entirely.
+    let model = WHISPER_MODEL;
+    if (args?.model) {
+      const resolvedModel = resolveModelPath(String(args.model));
+      if ("error" in resolvedModel) {
+        return { content: [{ type: "text", text: resolvedModel.error }], isError: true };
+      }
+      model = resolvedModel.path;
+    }
     const language = (args?.language as string) || "en";
     const outputFormat = ((args?.output_format as string) || "timestamps") as OutputFormat;
     const threads = Math.min(SYSTEM_THREADS, Math.max(1, Math.round((args?.threads as number) || WHISPER_THREADS)));
@@ -1933,7 +2293,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (args?.max_segment_length !== undefined) extraOpts.maxLen = coerceNum(args.max_segment_length);
     if (args?.split_on_word) extraOpts.splitOnWord = true;
     if (args?.diarize) extraOpts.diarize = true;
-    if (args?.vad_model) extraOpts.vadModel = String(args.vad_model);
+    if (args?.tinydiarize) extraOpts.tinyDiarize = true;
+    if (args?.vad_model) {
+      const vadPath = String(args.vad_model);
+      if (UNSAFE_PATH_RE.test(vadPath)) {
+        return { content: [{ type: "text", text: `Invalid vad_model path: "${vadPath}"\nPaths containing ".." or UNC paths are not allowed.` }], isError: true };
+      }
+      extraOpts.vadModel = vadPath;
+    }
     if (args?.offset_t !== undefined) extraOpts.offsetT = coerceNum(args.offset_t);
     if (args?.duration !== undefined) extraOpts.duration = coerceNum(args.duration);
 
@@ -1943,6 +2310,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+
+    // Resident-server routing (Phase 1): only the blocking transcribe path is server-backed.
+    // Anything else would need one-shot whisper-cli and collide with the server on the GPU,
+    // and unsupported options would be silently dropped — so refuse with clear guidance.
+    const serverUp = await isServerHealthy();
+    if (serverUp) {
+      if (background) return serverBusyRefusal("background transcription");
+      if (outputFormat === "lrc" || outputFormat === "csv") {
+        return { content: [{ type: "text", text:
+          `⛔ The resident model server doesn't produce ${outputFormat.toUpperCase()} output. ` +
+          `Stop it (whisper_server action="stop") to use the one-shot CLI for ${outputFormat.toUpperCase()}, ` +
+          `or choose text / timestamps / srt / vtt / json.` }], isError: true };
+      }
+      const dropped = unsupportedServerOpts(extraOpts);
+      if (dropped.length) {
+        return { content: [{ type: "text", text:
+          `⛔ These options aren't honored by the resident server and would be silently ignored: ${dropped.join(", ")}.\n\n` +
+          `Stop the server (whisper_server action="stop") to run this through the one-shot CLI, or drop those options.` }], isError: true };
+      }
+    }
 
     // Background mode — detached process, returns immediately
     if (background) {
@@ -1988,8 +2375,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Foreground timeout guard: a long file blows Claude Desktop's ~4-min MCP timeout in blocking
     // mode (the call errors even though the transcript finishes on disk). Probe the duration and
     // route to background BEFORE running into the wall. Skipped when ffprobe can't read the file
-    // (probe returns null) — it never blocks a transcribe it cannot measure.
-    {
+    // (probe returns null) — it never blocks a transcribe it cannot measure. Also skipped in
+    // server mode: the model is already resident, so the ~110s reload that drives the estimate
+    // past the wall isn't paid.
+    if (!serverUp) {
       const info = await probeFile(filePath);
       if (info && estimateSec(info.durationSec, hasVulkanDll()) > FOREGROUND_MAX_SEC) {
         return { content: [{ type: "text", text:
@@ -2045,6 +2434,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const jobId = args?.job_id as string;
     const privacyModeParam = args?.privacy_mode as boolean | undefined;
     if (!jobId) return { content: [{ type: "text", text: "job_id is required." }], isError: true };
+    if (!isValidJobId(jobId)) {
+      return { content: [{ type: "text", text: `Invalid job_id: "${jobId}"\nExpected the ID returned by transcribe_audio (e.g. job_1700000000000_a1b2c3d4).` }], isError: true };
+    }
     try {
       const result = await readJobProgress(jobId, privacyModeParam);
       return { content: [{ type: "text", text: result }] };
@@ -2071,6 +2463,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!existsSync(folderPath)) return { content: [{ type: "text", text: `Folder not found: ${folderPath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+
+    // Batch runs one-shot detached CLI jobs — refuse while the resident server holds the GPU.
+    if (await isServerHealthy()) return serverBusyRefusal("automated batch transcription");
 
     // Privacy gate: fires once before batch starts. All files then process unattended.
     // Gating per-file in an unattended batch would defeat the purpose of start_batch.
@@ -2148,6 +2543,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (name === "check_batch_progress") {
     const batchId = args?.batch_id as string;
     if (!batchId) return { content: [{ type: "text", text: "batch_id is required." }], isError: true };
+    if (!isValidBatchId(batchId)) {
+      return { content: [{ type: "text", text: `Invalid batch_id: "${batchId}"\nExpected the ID returned by start_batch (e.g. batch_1700000000000_a1b2c3d4).` }], isError: true };
+    }
     try {
       const result = await readBatchProgress(batchId);
       return { content: [{ type: "text", text: result }] };
@@ -2174,7 +2572,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (args?.beam_size !== undefined) extraOpts.beamSize = coerceNum(args.beam_size);
     if (args?.best_of !== undefined) extraOpts.bestOf = coerceNum(args.best_of);
     if (args?.diarize) extraOpts.diarize = true;
-    if (args?.vad_model) extraOpts.vadModel = String(args.vad_model);
+    if (args?.tinydiarize) extraOpts.tinyDiarize = true;
+    if (args?.vad_model) {
+      const vadPath = String(args.vad_model);
+      if (UNSAFE_PATH_RE.test(vadPath)) {
+        return { content: [{ type: "text", text: `Invalid vad_model path: "${vadPath}"\nPaths containing ".." or UNC paths are not allowed.` }], isError: true };
+      }
+      extraOpts.vadModel = vadPath;
+    }
     { const g = resolveGpuDevice(args?.gpu_device); if (g !== undefined) extraOpts.gpuDevice = g; }
 
     if (!filePath) return { content: [{ type: "text", text: "file_path is required." }], isError: true };
@@ -2183,6 +2588,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!existsSync(filePath)) return { content: [{ type: "text", text: `File not found: ${filePath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
+    // Subtitle generation runs one-shot CLI passes (auto-detect + native + translation) —
+    // refuse while the resident server holds the GPU. (Server-backed subtitles: later release.)
+    if (await isServerHealthy()) return serverBusyRefusal("subtitle generation");
     if (await isWhisperRunning()) {
       return { content: [{ type: "text", text: "Transcription already in progress. Wait for it to finish first." }], isError: true };
     }
@@ -2298,6 +2706,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const effectivePrivacyMode = privacyModeParam ?? WHISPER_PRIVACY_MODE;
 
     if (!folderPath) return { content: [{ type: "text", text: "folder_path is required." }], isError: true };
+    const folderPathError = validateInputPath(folderPath);
+    if (folderPathError) return { content: [{ type: "text", text: folderPathError }], isError: true };
     if (!existsSync(folderPath)) return { content: [{ type: "text", text: `Folder not found: ${folderPath}` }], isError: true };
     const configError = validatePaths();
     if (configError) return { content: [{ type: "text", text: configError }], isError: true };
@@ -2409,7 +2819,7 @@ async function main() {
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`whisper-windows-mcp v2.4.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS} | privacy: ${WHISPER_PRIVACY_MODE ? "on" : "off"}`);
+  console.error(`whisper-windows-mcp v2.5.0 running | threads: ${WHISPER_THREADS}/${SYSTEM_THREADS} | privacy: ${WHISPER_PRIVACY_MODE ? "on" : "off"}`);
 }
 
 main().catch((err) => {

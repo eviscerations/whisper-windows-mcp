@@ -183,6 +183,7 @@ GPU가 감지되고 Vulkan 가속이 활성화되었는지 확인합니다.
 | `word_timestamps` | 타임스탬프가 있는 단어별 세그먼트. 클립 정렬에 유용. |
 | `max_segment_length` | 세그먼트 최대 문자 수. |
 | `diarize` | 스테레오 화자 분리 — 별도 채널에 화자가 녹음된 스테레오 음성 필요. |
+| `tinydiarize` | 모노 화자 전환 감지 — 단일 채널 음성에서 화자가 바뀌는 지점에 `[SPEAKER_TURN]`을 표시합니다. tdrz 모델이 필요합니다: `download_model small.en-tdrz`를 실행한 뒤 `switch_model ggml-small.en-tdrz.bin`. |
 | `vad_model` | Silero VAD 모델 .bin 경로. 전사 전 무음 제거 — 잡음이 많은 파일의 환각 감소. |
 | `offset_t` | 시작 오프셋(밀리초). |
 | `duration` | 오프셋부터 처리할 시간(밀리초). |
@@ -298,6 +299,21 @@ GPU 하드웨어를 감지하고 Vulkan 가속 사용 가능 여부를 확인합
 
 ---
 
+### `whisper_server`
+**영구 모델 서버**(whisper.cpp의 `whisper-server`)를 시작, 중지 또는 확인합니다. 실행 중에는 활성 모델이 VRAM에 상주하며 모든 `transcribe_audio` / `transcribe_batch` 호출이 localhost를 통해 처리됩니다 — **파일별 모델 재로드 없이** — 일회성 모델 로드 비용이 지배적인 짧은 파일을 많이 전사할 때 큰 속도 향상을 제공합니다.
+
+| 파라미터 | 설명 |
+|---|---|
+| `action` | `start` — 활성 모델을 상주시켜 실행; `stop` — 종료하고 VRAM 해제; `status` — 실행 상태, 상주 모델, 포트, 가동 시간 보고. |
+
+- ⚠️ **상주 모델은 서버의 전체 수명 동안 GPU VRAM을 점유합니다.** 의도적으로 시작하고, 작업을 수행한 뒤, `stop`으로 카드를 공유하는 다른 애플리케이션에 GPU를 반환하세요. 중지는 완전한 종료를 수행하므로 VRAM이 실제로 해제됩니다.
+- 서버가 실행 중일 때 `switch_model`은 상주 모델을 그 자리에서 핫스왑합니다(재시작 없음).
+- `127.0.0.1`에만 바인딩됩니다 — 네트워크에 노출되지 않습니다.
+- 서버가 실행 중인 동안, 일회성 CLI가 필요한 작업 — 백그라운드 작업, `start_batch`, `generate_subtitles`, `lrc`/`csv` 출력, 그리고 HTTP API가 준수하지 않는 고급 호출별 옵션(`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`) — 은 조용히 무시되는 대신 "먼저 서버를 중지하세요" 메시지와 함께 **거부**되므로, 두 번째 엔진이 GPU를 두고 경합하는 일이 절대 없습니다.
+- `whisper-server.exe`가 필요합니다(`whisper-cli.exe`와 함께 제공됨). 필요한 경우 `WHISPER_SERVER_PATH` / `WHISPER_SERVER_PORT`로 설정하세요.
+
+---
+
 ## 지원 포맷
 
 | 유형 | 포맷 |
@@ -371,6 +387,8 @@ whisper-windows-mcp에는 민감하고 규제 대상인 콘텐츠를 위한 내�
 | `WHISPER_GPU_DEVICE` | 다중 GPU 시스템에서 전사를 고정할 Vulkan 장치 인덱스(Windows GPU 순서가 아닌 Vulkan 열거 인덱스 — whisper-cli 시작 로그를 확인하세요). 호출별 `gpu_device`로 재정의 가능합니다. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 참고. |
 | `WHISPER_FOREGROUND_MAX_SEC` | 포그라운드 전사 한도(초, 기본값 210). 더 오래 실행될 것으로 추정되는 파일은 Claude Desktop의 약 4분 도구 타임아웃 위험을 감수하는 대신 백그라운드 모드로 라우팅됩니다. |
 | `FFMPEG_PATH` | ffmpeg가 시스템 PATH에 없을 경우 경로 |
+| `WHISPER_SERVER_PATH` | 영구 모델 서버용 `whisper-server.exe` 경로 (기본값: `whisper-cli.exe`와 동일 위치). `whisper_server` 도구 참고. |
+| `WHISPER_SERVER_PORT` | 영구 모델 서버의 localhost 포트 (기본값 8571). 항상 `127.0.0.1`에 바인딩됩니다. |
 | `WHISPER_PRIVACY_MODE` | `true`로 설정하면 모든 도구 응답에서 전사 텍스트 없이 메타데이터만 반환됩니다. 규제 대상 또는 기밀 콘텐츠에 사용합니다. 호출별 `privacy_mode` 파라미터로 재정의 가능합니다. [PRIVACY.md](PRIVACY.md) 참고. |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | `true`로 설정하면 전사 텍스트 반환 전 표시되는 일회성 세션 동의 공개를 건너뜁니다. 개인 정보 경계를 이해하고 더 이상 알림이 필요하지 않을 때 설정하세요. 개인 정보 모드가 활성화된 경우 효과 없음. |
 
@@ -386,13 +404,15 @@ Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
 
 예상 해시는 [릴리스 페이지](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0)에 문서화되어 있습니다.
 
-**입력 검증.** 모든 파일 경로는 사용 전에 검증됩니다 — UNC 경로(`\\server\share`) 및 디렉터리 탐색 시퀀스(`..`)는 거부됩니다. 10 GB를 초과하는 파일은 리소스 고갈을 방지하기 위해 거부됩니다.
+**입력 검증.** 모든 파일 및 폴더 경로는 경로를 받는 모든 도구에서 사용 전에 검증됩니다 — UNC 경로(`\\server\share`) 및 디렉터리 탐색 시퀀스(`..`)는 거부됩니다. 10 GB를 초과하는 파일은 리소스 고갈을 방지하기 위해 거부됩니다. `job_id`와 `batch_id`는 파일 경로를 구성하는 데 사용되기 전에 서버가 발급한 정확한 형식과 대조되어, 조작된 ID가 작업 디렉터리 밖으로 탈출할 수 없습니다.
 
-**전사 인젝션 인식.** 음성 파일에는 전사 시 지시처럼 보이는 발화 내용이 포함될 수 있습니다. Claude의 내장 방어 기능이 이를 처리하지만, MCP 서버 자체도 전사 내용을 데이터로만 처리하며 지시로 해석하지 않는다는 점을 알아두는 것이 좋습니다.
+**전사 인젝션 인식.** 음성 파일에는 전사 시 지시처럼 보이는 발화 내용이 포함될 수 있습니다. Claude의 내장 방어 기능이 이를 처리하지만, MCP 서버 자체도 전사 내용을 데이터로만 처리하며 지시로 해석하지 않는다는 점을 알아두는 것이 좋습니다. 전사된 내용이 Claude가 다음에 호출할 도구에 여전히 영향을 줄 수 있으므로, 경로/ID 검증은 단일 사용자 가정에만 의존하지 않고 방어적으로 적용됩니다.
 
-**모델 다운로드는 제한됩니다.** `download_model` 도구는 두 개의 신뢰할 수 있는 Hugging Face 네임스페이스(`ggerganov/whisper.cpp` 및 `ggml-org`)에서만 다운로드합니다. 임의의 URL은 거부됩니다. 리다이렉트는 허용 목록에 대해 검증된 후 따릅니다.
+**모델 다운로드는 제한됩니다.** `download_model` 도구는 두 개의 신뢰할 수 있는 Hugging Face 네임스페이스(`ggerganov/whisper.cpp` 및 `ggml-org`)에서만 다운로드합니다. 임의의 URL은 거부됩니다. 리다이렉트는 따르기 전에 허용 목록에 대해 검증됩니다. (다운로드는 아직 모델별 SHA256 다이제스트로 검증되지 않습니다 — SECURITY.md 참고.)
 
-**모델 전환은 샌드박스화됩니다.** `switch_model`은 설정된 모델 디렉터리 내의 `.bin` 파일만 허용합니다. 해당 디렉터리 외부의 경로는 거부됩니다.
+**모델 선택은 샌드박스화됩니다.** `switch_model`과 `transcribe_audio`의 `model` 재정의는 모두 설정된 모델 디렉터리 내의 `.bin` 파일만 허용합니다. 해당 디렉터리 외부의 경로는 정규화된 경로 격리를 통해 거부됩니다.
+
+**PATH 섀도잉 없음.** 서버가 사용자를 대신하여 호출하는 시스템 바이너리(`tasklist`, `wmic`)는 절대 `System32` 경로로 호출되므로 `PATH`상 앞에 위치한 동일 이름의 실행 파일로 섀도잉될 수 없습니다.
 
 전체 보안 정책은 [SECURITY.md](SECURITY.md)를 참고하세요.
 

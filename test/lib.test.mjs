@@ -12,6 +12,7 @@ import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   coerceNum, writeJsonAtomic, estimateWordCount, stableStringify, opKeyFor, isInsideDir,
+  isValidJobId, isValidBatchId,
   extractTranscriptFromLog, parseLastTimestamp, formatDuration, estimateSec, estimateTime,
 } from "../dist/lib.js";
 
@@ -42,6 +43,29 @@ test("isInsideDir: traversal-out and parent-itself are rejected", () => {
   const parent = resolve("base", "models");
   assert.equal(isInsideDir(resolve(parent, "..", "evil.bin"), parent), false);
   assert.equal(isInsideDir(parent, parent), false); // strictly inside, not equal
+});
+
+// --- job/batch ID validation — the traversal boundary for job-file fs access ---
+test("isValidJobId: accepts server-minted IDs only", () => {
+  assert.equal(isValidJobId("job_1700000000000_a1b2c3d4"), true);
+  assert.equal(isValidBatchId("batch_1700000000000_deadbeef"), true);
+});
+test("isValidJobId: SECURITY — traversal / malformed / wrong-tool IDs are rejected", () => {
+  for (const bad of [
+    "..\\..\\..\\Users\\E\\secret",
+    "../../etc/passwd",
+    "job_1700000000000_a1b2c3d4/../../evil",
+    "job_1700000000000_A1B2C3D4",      // uppercase hex not minted
+    "job_1700000000000_a1b2c3d",       // 7 hex chars
+    "job_abc_a1b2c3d4",                // non-numeric epoch
+    "batch_1700000000000_a1b2c3d4",    // batch ID is not a valid job ID
+    "", "   ", undefined, null, 42, {},
+  ]) {
+    assert.equal(isValidJobId(bad), false, `isValidJobId(${String(bad)})`);
+  }
+  // and the mirror: a job ID must not satisfy the batch check
+  assert.equal(isValidBatchId("job_1700000000000_a1b2c3d4"), false);
+  assert.equal(isValidBatchId("..\\..\\secret"), false);
 });
 
 // --- #2: privacy-gate keying — confirming one op must never satisfy another ---

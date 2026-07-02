@@ -183,6 +183,7 @@ Transkrybuje pojedynczy plik. Obsługuje tryb blokujący (domyślny) lub działa
 | `word_timestamps` | Jedno słowo na segment ze znacznikiem czasu. Przydatne do wyrównywania klipów. |
 | `max_segment_length` | Maksymalna długość segmentu w znakach. |
 | `diarize` | Diaryzacja mówców stereo — wymaga audio stereo z mówcami na osobnych kanałach. |
+| `tinydiarize` | Wykrywanie zmian mówcy mono — oznacza `[SPEAKER_TURN]` przy zmianach mówcy w audio jednokanałowym. Wymaga modelu tdrz: `download_model small.en-tdrz`, a następnie `switch_model ggml-small.en-tdrz.bin`. |
 | `vad_model` | Ścieżka do pliku .bin modelu Silero VAD. Usuwa ciszę przed transkrypcją — redukuje halucynacje w hałaśliwych plikach. |
 | `offset_t` | Przesunięcie początkowe w milisekundach. |
 | `duration` | Czas przetwarzania w milisekundach od przesunięcia. |
@@ -309,6 +310,21 @@ Wykrywa sprzęt GPU i potwierdza dostępność akceleracji Vulkan. Raportuje naz
 
 ---
 
+### `whisper_server`
+Uruchamia, zatrzymuje lub sprawdza **trwały serwer modelu** (`whisper-server` z whisper.cpp). Gdy jest uruchomiony, aktywny model pozostaje rezydentny w VRAM, a każde wywołanie `transcribe_audio` / `transcribe_batch` jest obsługiwane przez localhost **bez przeładowywania modelu dla każdego pliku** — duże przyspieszenie przy transkrypcji wielu krótkich plików, gdzie jednorazowy koszt załadowania modelu w przeciwnym razie dominuje.
+
+| Parametr | Opis |
+|---|---|
+| `action` | `start` — uruchom z aktywnym modelem rezydentnym; `stop` — zamknij i zwolnij VRAM; `status` — raportuj stan działania, model rezydentny, port i czas działania. |
+
+- ⚠️ **Model rezydentny zajmuje VRAM GPU przez cały czas życia serwera.** Uruchamiaj go świadomie, wykonaj swoją pracę, a następnie `stop`, aby oddać GPU innym aplikacjom współdzielącym kartę. Zatrzymanie wykonuje pełne zabicie procesu, więc VRAM jest rzeczywiście zwalniany.
+- `switch_model` w trakcie działania serwera podmienia model rezydentny w locie (bez restartu).
+- Powiązany tylko z `127.0.0.1` — nigdy nie udostępniany w sieci.
+- Gdy serwer działa, operacje wymagające jednorazowego CLI — zadania w tle, `start_batch`, `generate_subtitles`, wyjście `lrc`/`csv` oraz zaawansowane opcje per wywołanie, których nie obsługuje API HTTP (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`) — są **odrzucane** z komunikatem "najpierw zatrzymaj serwer" zamiast być po cichu ignorowane, więc żaden drugi silnik nigdy nie rywalizuje o GPU.
+- Wymaga `whisper-server.exe` (dostarczany razem z `whisper-cli.exe`). W razie potrzeby skonfiguruj przez `WHISPER_SERVER_PATH` / `WHISPER_SERVER_PORT`.
+
+---
+
 ## Obsługiwane formaty
 
 | Typ | Formaty |
@@ -382,6 +398,8 @@ To narzędzie zostało stworzone, aby zminimalizować interakcje z API Claude. C
 | `WHISPER_GPU_DEVICE` | Indeks urządzenia Vulkan, do którego przypiąć transkrypcję, dla systemów z wieloma GPU (indeks enumeracji Vulkan — sprawdź log startowy whisper-cli; nie kolejność GPU w Windows). Możliwe do zastąpienia per wywołanie przez `gpu_device`. Zobacz [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
 | `WHISPER_FOREGROUND_MAX_SEC` | Limit transkrypcji na pierwszym planie w sekundach (domyślnie 210). Pliki, których czas wykonania szacuje się na dłuższy, są kierowane do trybu w tle zamiast ryzykować ~4-minutowy limit czasu narzędzia w Claude Desktop. |
 | `FFMPEG_PATH` | Ścieżka do ffmpeg jeśli nie ma go w systemowym PATH |
+| `WHISPER_SERVER_PATH` | Ścieżka do `whisper-server.exe` dla trwałego serwera modelu (domyślnie: obok `whisper-cli.exe`). Zobacz narzędzie `whisper_server`. |
+| `WHISPER_SERVER_PORT` | Port localhost dla trwałego serwera modelu (domyślnie 8571). Zawsze powiązany z `127.0.0.1`. |
 | `WHISPER_PRIVACY_MODE` | Gdy `true`, odpowiedzi narzędzi zwracają tylko metadane — żaden tekst transkrypcji nie jest przesyłany do Claude. Dla treści regulowanych lub poufnych. Może być zastąpione per wywołanie przez parametr `privacy_mode`. Zobacz [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Gdy `true`, pomija jednorazowe ujawnienie zgody dla sesji przed zwróceniem tekstu transkrypcji. Ustaw po zapoznaniu się z granicami prywatności, gdy przypomnienie nie jest już potrzebne. Nie ma efektu gdy tryb prywatności jest aktywny. |
 
@@ -397,13 +415,15 @@ Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
 
 Oczekiwany skrót dla binarnego wydania jest udokumentowany na [stronie wydań](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
 
-**Walidacja danych wejściowych.** Wszystkie ścieżki plików są weryfikowane przed użyciem — ścieżki UNC (`\\server\share`) i sekwencje przechodzenia katalogów (`..`) są odrzucane. Pliki powyżej 10 GB są odrzucane, aby zapobiec wyczerpaniu zasobów.
+**Walidacja danych wejściowych.** Wszystkie ścieżki plików i folderów są weryfikowane przed użyciem, w każdym narzędziu, które je przyjmuje — ścieżki UNC (`\\server\share`) i sekwencje przechodzenia katalogów (`..`) są odrzucane. Pliki powyżej 10 GB są odrzucane, aby zapobiec wyczerpaniu zasobów. `job_id` i `batch_id` są sprawdzane względem dokładnego formatu wygenerowanego przez serwer, zanim zostaną użyte do zbudowania jakiejkolwiek ścieżki pliku, więc spreparowany identyfikator nie może wyjść poza katalog zadań.
 
-**Świadomość iniekcji transkrypcji.** Pliki audio mogą zawierać wypowiadaną treść, która po transkrypcji przypomina instrukcje. Wbudowane mechanizmy obronne Claude obsługują to, ale warto wiedzieć, że sam serwer MCP traktuje treść transkrypcji jako dane — nigdy jako instrukcje.
+**Świadomość iniekcji transkrypcji.** Pliki audio mogą zawierać wypowiadaną treść, która po transkrypcji przypomina instrukcje. Wbudowane mechanizmy obronne Claude obsługują to, ale warto wiedzieć, że sam serwer MCP traktuje treść transkrypcji jako dane — nigdy jako instrukcje. Ponieważ transkrybowana treść może nadal wpływać na to, które narzędzia Claude wywoła dalej, walidacja ścieżek/identyfikatorów jest stosowana obronnie, zamiast polegać wyłącznie na założeniu pojedynczego użytkownika.
 
-**Pobieranie modeli jest ograniczone.** Narzędzie `download_model` pobiera tylko z dwóch zaufanych przestrzeni nazw Hugging Face (`ggerganov/whisper.cpp` i `ggml-org`). Dowolne URL są odrzucane. Przekierowania są weryfikowane względem listy dozwolonych przed wykonaniem.
+**Pobieranie modeli jest ograniczone.** Narzędzie `download_model` pobiera tylko z dwóch zaufanych przestrzeni nazw Hugging Face (`ggerganov/whisper.cpp` i `ggml-org`). Dowolne URL są odrzucane. Przekierowania są weryfikowane względem listy dozwolonych przed wykonaniem. (Pobrania nie są jeszcze weryfikowane względem skrótu SHA256 per model — zobacz SECURITY.md.)
 
-**Przełączanie modeli jest piaskownicowane.** `switch_model` akceptuje tylko pliki `.bin` w skonfigurowanym katalogu modeli. Ścieżki poza tym katalogiem są odrzucane.
+**Wybór modelu jest piaskownicowany.** Zarówno `switch_model`, jak i zastąpienie `model` w `transcribe_audio` akceptują tylko pliki `.bin` w skonfigurowanym katalogu modeli. Ścieżki poza tym katalogiem są odrzucane przez znormalizowane sprawdzanie zawierania ścieżki.
+
+**Brak przesłaniania PATH.** Binaria systemowe wywoływane przez serwer w twoim imieniu (`tasklist`, `wmic`) są uruchamiane po bezwzględnej ścieżce `System32`, więc nie mogą zostać przesłonięte przez plik wykonywalny o tej samej nazwie umieszczony wcześniej na `PATH`.
 
 Zobacz [SECURITY.md](SECURITY.md) dla pełnej polityki bezpieczeństwa.
 

@@ -183,6 +183,7 @@ Transcrie un singur fișier. Suportă modul de blocare (implicit) sau în fundal
 | `word_timestamps` | Un cuvânt pe segment cu marcaj de timp. Util pentru alinierea clipurilor. |
 | `max_segment_length` | Lungimea maximă a segmentului în caractere. |
 | `diarize` | Diarizare vorbitori stereo — necesită audio stereo cu vorbitori pe canale separate. |
+| `tinydiarize` | Detectarea schimbărilor de vorbitor pe mono — marchează `[SPEAKER_TURN]` la schimbările de vorbitor pe audio pe un singur canal. Necesită un model tdrz: `download_model small.en-tdrz`, apoi `switch_model ggml-small.en-tdrz.bin`. |
 | `vad_model` | Calea către fișierul .bin al modelului Silero VAD. Elimină tăcerea înainte de transcriere — reduce halucinațiile în fișierele zgomotoase. |
 | `offset_t` | Decalajul de pornire în milisecunde. |
 | `duration` | Durata de procesat în milisecunde de la decalaj. |
@@ -309,6 +310,21 @@ Detectează hardware-ul GPU și confirmă dacă accelerarea Vulkan este disponib
 
 ---
 
+### `whisper_server`
+Pornește, oprește sau verifică **serverul de model persistent** (`whisper-server` din whisper.cpp). Cât timp rulează, modelul activ rămâne rezident în VRAM și fiecare apel `transcribe_audio` / `transcribe_batch` este servit prin localhost **fără reîncărcarea modelului per fișier** — o accelerare mare la transcrierea multor fișiere scurte, unde costul unic de încărcare a modelului ar domina altfel.
+
+| Parametru | Descriere |
+|---|---|
+| `action` | `start` — pornește cu modelul activ rezident; `stop` — oprește și eliberează VRAM; `status` — raportează starea de execuție, modelul rezident, portul și timpul de funcționare. |
+
+- ⚠️ **Modelul rezident ocupă VRAM-ul GPU pe toată durata de viață a serverului.** Pornește-l deliberat, fă-ți treaba, apoi `stop` pentru a preda GPU-ul altor aplicații care partajează placa. Oprirea execută o închidere completă, astfel încât VRAM-ul este eliberat efectiv.
+- `switch_model` cât timp serverul rulează schimbă la cald modelul rezident pe loc (fără repornire).
+- Legat doar la `127.0.0.1` — niciodată expus în rețea.
+- Cât timp serverul este pornit, operațiunile care necesită CLI-ul unic — sarcini în fundal, `start_batch`, `generate_subtitles`, ieșire `lrc`/`csv` și opțiuni avansate per apel pe care API-ul HTTP nu le onorează (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`) — sunt **respinse** cu un mesaj „oprește serverul mai întâi” în loc să fie ignorate în tăcere, astfel încât niciun al doilea motor să nu concureze vreodată pentru GPU.
+- Necesită `whisper-server.exe` (livrat alături de `whisper-cli.exe`). Configurează cu `WHISPER_SERVER_PATH` / `WHISPER_SERVER_PORT` dacă este necesar.
+
+---
+
 ## Formate suportate
 
 | Tip | Formate |
@@ -382,6 +398,8 @@ Acest instrument a fost creat pentru a minimiza interacțiunile cu API-ul Claude
 | `WHISPER_GPU_DEVICE` | Indexul dispozitivului Vulkan la care se fixează transcrierea, pentru sisteme cu mai multe GPU-uri (indexul de enumerare Vulkan — verifică jurnalul de pornire al whisper-cli; nu ordinea GPU din Windows). Suprascriabil per apel cu `gpu_device`. Vezi [TROUBLESHOOTING.md](TROUBLESHOOTING.md). |
 | `WHISPER_FOREGROUND_MAX_SEC` | Limita transcrierii în prim-plan în secunde (implicit 210). Fișierele estimate să ruleze mai mult sunt direcționate către modul în fundal în loc să riște timpul de expirare al instrumentului de ~4 minute al Claude Desktop. |
 | `FFMPEG_PATH` | Calea către ffmpeg dacă nu este în PATH-ul sistemului |
+| `WHISPER_SERVER_PATH` | Calea către `whisper-server.exe` pentru serverul de model persistent (implicit: alături de `whisper-cli.exe`). Vezi instrumentul `whisper_server`. |
+| `WHISPER_SERVER_PORT` | Portul localhost pentru serverul de model persistent (implicit 8571). Întotdeauna legat la `127.0.0.1`. |
 | `WHISPER_PRIVACY_MODE` | Când `true`, răspunsurile instrumentelor returnează doar metadate — niciun text de transcriere nu este transmis lui Claude. Pentru conținut reglementat sau confidențial. Poate fi suprascris per apel prin parametrul `privacy_mode`. Vezi [PRIVACY.md](PRIVACY.md). |
 | `WHISPER_CONSENT_ACKNOWLEDGED` | Când `true`, suprimă dezvăluirea de consimțământ unică per sesiune înainte de returnarea textului de transcriere. Setează după ce ai revizuit limitele de confidențialitate când memento-ul nu mai este necesar. Nu are efect când modul de confidențialitate este activ. |
 
@@ -397,13 +415,15 @@ Get-FileHash "C:\whisper\Release\whisper-cli.exe" -Algorithm SHA256
 
 Hash-ul așteptat pentru binarul de versiune este documentat pe [pagina de versiuni](https://github.com/eviscerations/whisper-windows-mcp/releases/tag/v1.4.0).
 
-**Validarea intrărilor.** Toate căile de fișiere sunt validate înainte de utilizare — căile UNC (`\\server\share`) și secvențele de traversare a directoarelor (`..`) sunt respinse. Fișierele peste 10 GB sunt respinse pentru a preveni epuizarea resurselor.
+**Validarea intrărilor.** Toate căile de fișiere și de foldere sunt validate înainte de utilizare, pe fiecare instrument care primește una — căile UNC (`\\server\share`) și secvențele de traversare a directoarelor (`..`) sunt respinse. Fișierele peste 10 GB sunt respinse pentru a preveni epuizarea resurselor. `job_id` și `batch_id` sunt verificate față de formatul exact emis de server înainte de a fi folosite pentru a construi orice cale de fișier, astfel încât un ID fabricat să nu poată ieși prin traversare din directorul de sarcini.
 
-**Conștientizarea injecției de transcriere.** Fișierele audio pot conține conținut vorbit care, atunci când este transcris, seamănă cu instrucțiuni. Apărările încorporate ale Claude gestionează acest lucru, dar serverul MCP în sine tratează conținutul de transcriere ca date — niciodată ca instrucțiuni.
+**Conștientizarea injecției de transcriere.** Fișierele audio pot conține conținut vorbit care, atunci când este transcris, seamănă cu instrucțiuni. Apărările încorporate ale Claude gestionează acest lucru, dar merită știut că serverul MCP în sine tratează conținutul de transcriere ca date — niciodată ca instrucțiuni. Deoarece conținutul transcris poate influența totuși ce instrumente apelează Claude în continuare, validarea căilor/ID-urilor este aplicată defensiv, nu bazându-se doar pe presupunerea de utilizator unic.
 
-**Descărcările de modele sunt restricționate.** Instrumentul `download_model` descarcă doar din două spații de nume Hugging Face de încredere (`ggerganov/whisper.cpp` și `ggml-org`). URL-urile arbitrare sunt respinse. Redirecționările sunt validate față de o listă de permise înainte de a fi urmate.
+**Descărcările de modele sunt restricționate.** Instrumentul `download_model` descarcă doar din două spații de nume Hugging Face de încredere (`ggerganov/whisper.cpp` și `ggml-org`). URL-urile arbitrare sunt respinse. Redirecționările sunt validate față de o listă de permise înainte de a fi urmate. (Descărcările nu sunt încă verificate față de un digest SHA256 per model — vezi SECURITY.md.)
 
-**Schimbarea modelelor este sandboxată.** `switch_model` acceptă doar fișiere `.bin` în directorul de modele configurat. Căile din afara acelui director sunt respinse.
+**Selectarea modelelor este sandboxată.** Atât `switch_model`, cât și suprascrierea `model` din `transcribe_audio` acceptă doar fișiere `.bin` din directorul de modele configurat. Căile din afara acelui director sunt respinse prin conținere de cale normalizată.
+
+**Fără umbrire de PATH.** Binarele de sistem pe care serverul le invocă în numele tău (`tasklist`, `wmic`) sunt apelate prin calea absolută `System32`, astfel încât să nu poată fi umbrite de un executabil cu același nume aflat mai devreme pe `PATH`.
 
 Vezi [SECURITY.md](SECURITY.md) pentru politica completă de securitate.
 
