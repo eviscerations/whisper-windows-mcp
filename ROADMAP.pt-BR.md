@@ -16,7 +16,7 @@ Estes princípios regem cada decisão neste projeto e têm prioridade sobre a ve
 
 **Controle explícito do usuário.** Sem operações em massa silenciosas. Ações destrutivas ou irreversíveis exigem confirmação. O usuário deve sempre saber o que vai acontecer antes de acontecer.
 
-**Caminhos seguros para Unicode.** Toda E/S de arquivo deve lidar corretamente com nomes de arquivo não-ASCII, incluindo português, japonês, chinês, emoji, colchetes e outros caracteres especiais.
+**Caminhos seguros para Unicode.** Toda E/S de arquivo deve lidar corretamente com nomes de arquivo não-ASCII, incluindo japonês, chinês, emoji, colchetes e outros caracteres especiais.
 
 **Modular e combinável.** As ferramentas são independentes. Os usuários usam o que precisam. Nenhuma funcionalidade deve exigir outra, a menos que seja inevitável.
 
@@ -88,15 +88,15 @@ Arquitetura de processo desanexado: `transcribe_audio` com `background=true` cri
 
 ### ✅ v2.3.0 — Avanço automático de lote, arquitetura de privacidade, expansão de formatos de saída
 
-**Avanço automático de lote (correção de bug crítico):** `start_batch` antes exigia polling ativo para avançar a fila. Agora cada processo filho whisper-cli criado tem um handler `on('exit')` anexado. Quando o processo termina, o lote avança imediatamente de forma autônoma através do callback de saída — sem custo de polling nem chamadas de API. Um mutex previne a criação dupla entre o handler de saída e chamadas simultâneas a `check_batch_progress`.
+**Avanço automático de lote (correção de bug crítico):** `start_batch` antes exigia polling ativo para avançar a fila. Agora cada processo filho whisper-cli criado tem um handler `on('exit')` anexado. Quando o processo termina, o lote avança imediatamente de forma autônoma através do callback de saída — sem custo de polling nem chamadas de API consumidas. Um mutex previne a criação dupla entre o handler de saída e chamadas simultâneas a `check_batch_progress`.
 
 **Arquitetura de privacidade:**
 - Variável de ambiente `WHISPER_PRIVACY_MODE` — quando definida como `true`, todas as respostas das ferramentas retornam apenas metadados (nome do arquivo, contagem de palavras, caminho de salvamento). Nenhum texto de transcrição é enviado à API do Claude. As transcrições existem apenas como arquivos locais.
 - Variável de ambiente `WHISPER_CONSENT_ACKNOWLEDGED` — quando definida como `true`, suprime a porta de consentimento única por sessão para conteúdo não sensível.
-- Parâmetro `privacy_mode` por chamada em `transcribe_audio`, `transcribe_batch`, `start_batch`, `check_progress`. Substitui a variável de ambiente global em ambas as direções. Não requer reinicialização para ativar/desativar.
+- Parâmetro `privacy_mode` por chamada em `transcribe_audio`, `transcribe_batch`, `start_batch` e `check_progress`. Substitui a variável de ambiente global em ambas as direções. Não requer reinicialização para ativar/desativar por chamada.
 - Porta do modo de privacidade (`checkPrivacyGate()`) — executada antes de cada operação quando o modo de privacidade efetivo está ativo. Primeira chamada ativa (exibe divulgação), segunda chamada libera (permite). Reinicia após cada operação. Completamente independente da porta de consentimento de sessão.
 - Porta de consentimento de sessão (`transcriptPolicy()`) — executada uma vez por sessão antes da primeira chamada que retorne transcrição no modo padrão. Consumida pelo flag `sessionConsentGiven`.
-- `PRIVACY.md` — documentação de conformidade completa cobrindo HIPAA, GDPR, privilégio advogado-cliente, FERPA, SOX, PCI-DSS, NDA/segredo comercial.
+- `PRIVACY.md` — documentação de conformidade completa cobrindo HIPAA, GDPR, privilégio advogado-cliente, FERPA, SOX, PCI-DSS e NDA/segredo comercial.
 - Avisos de privacidade nas descrições de ferramentas de todas as ferramentas que retornam texto de transcrição.
 
 **Expansão de formatos de saída:**
@@ -116,7 +116,7 @@ Arquitetura de processo desanexado: `transcribe_audio` com `background=true` cri
 - O log de inicialização reporta modo de privacidade ativado/desativado.
 - Campo `privacyMode: boolean` adicionado à interface `Job`.
 - Campo `privacyMode: boolean` adicionado à interface `BatchState`.
-- O tipo `BackgroundFormat` exclui `json` (json no modo em segundo plano não é suportado — cai de volta para `text`).
+- O tipo `BackgroundFormat` exclui `json` (json no modo em segundo plano permanece não suportado — cai de volta para `text`).
 
 ### ✅ v2.4.0 — Fortalecimento, guarda de tempo limite em primeiro plano, suíte de testes e CI
 
@@ -142,17 +142,14 @@ Uma passagem de segurança/robustez; a migração para Bun planejada foi movida 
 
 **Identificado para um lançamento futuro:** um caminho de modelo persistente (p. ex. o `whisper-server` do whisper.cpp) para eliminar o custo de recarga do modelo pago em cada transcrição — um grande ganho de throughput para trabalho em lote/de arquivo.
 
----
+### ✅ v2.5.0 — Servidor de modelo persistente + TinyDiarize
 
-## Planejado — v2.5.0: Servidor de modelo persistente
-
-Manter o modelo Whisper residente entre transcrições em vez de recarregá-lo a cada invocação.
-
-Este é o maior ganho de throughput disponível. O whisper-cli é de uma passagem: ele recarrega o modelo completo a cada chamada, e o v2.4.0 mediu essa recarga em ~110s em uma GPU com memória limitada — um imposto fixo pago por arquivo, independentemente da duração do áudio. Para cargas de trabalho de lote e arquivo, isso domina o tempo total mais do que a própria transcrição.
-
-**Abordagem:** executar o `whisper-server` (HTTP) que acompanha o whisper.cpp como um único processo de longa duração com o modelo mantido em memória. O servidor MCP envia cada transcrição a ele por localhost e recebe os resultados de volta sem pagar novamente o custo de recarga.
-
-**Reconciliação com "sempre uma única instância do whisper":** o princípio é preservado, o mecanismo evolui. O servidor residente *se torna* a instância única; o bloqueio de processo muda de "nunca criar um segundo whisper-cli" para "serializar requisições contra o único servidor residente". Nenhuma concorrência é introduzida.
+**Servidor de modelo persistente (Fase 1).** O whisper-cli é de uma passagem: ele recarrega o modelo completo a cada chamada — o v2.4.0 mediu essa recarga em ~110s em uma GPU com memória limitada, um imposto fixo por arquivo que domina o tempo total em trabalho de lote/arquivo. O v2.5.0 adiciona um modo opcional de modelo residente que mantém o modelo em memória entre transcrições.
+- Ferramenta `whisper_server` (`start` / `stop` / `status`). O servidor residente *se torna* a instância única, preservando a regra de uma única instância do whisper: as requisições são serializadas contra ele, sem introdução de concorrência.
+- `transcribe_audio` e `transcribe_batch` em modo de bloqueio passam pelo servidor residente por localhost (`127.0.0.1`) via `POST /inference`, evitando o custo de recarga. A guarda de tempo limite em primeiro plano é ignorada no modo servidor (não há recarga a pagar).
+- `switch_model` troca o modelo residente em tempo real via `POST /load` sem reinicialização. `check_config` reporta o estado do servidor; o servidor próprio é encerrado no desligamento para liberar a VRAM.
+- A regra de um único motor / VRAM compartilhada é aplicada com uma barreira rígida no caminho de criação de processo desanexado, além de recusas amigáveis: enquanto o servidor está ativo, tarefas em segundo plano, `start_batch`, `generate_subtitles`, saída `lrc`/`csv` e opções por requisição que a API HTTP não respeita (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration` etc.) são recusadas com uma mensagem "pare o servidor primeiro" em vez de degradar silenciosamente.
+- Configuração: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (padrão 8571, apenas localhost).
 
 **Restrições de design:**
 - Ciclo de vida explícito: start / stop / status, com verificação de saúde. O servidor nunca é iniciado silenciosamente como efeito colateral de uma chamada não relacionada.
@@ -162,21 +159,19 @@ Este é o maior ganho de throughput disponível. O whisper-cli é de uma passage
 - As barreiras de privacidade e consentimento permanecem inalteradas — elas ficam acima do mecanismo de transcrição.
 - Seleção de porta com tratamento de colisão; encerramento limpo em SIGINT/SIGTERM junto com a limpeza de arquivos temporários existente.
 
-**Status — Fase 1 ✅ implementada (aguardando release):** ferramenta `whisper_server` (`start` / `stop` / `status`); `transcribe_audio` e `transcribe_batch` em modo de bloqueio passam pelo servidor residente por localhost (`127.0.0.1`, verificado contra a API HTTP atual do `whisper-server` do whisper.cpp); `switch_model` troca o modelo residente em tempo real via `POST /load` sem reinicialização; a guarda de tempo limite em primeiro plano é ignorada no modo servidor (não há recarga a pagar); `check_config` reporta o estado do servidor; o servidor próprio é encerrado no desligamento para liberar a VRAM. A regra de um único motor / VRAM compartilhada é aplicada com uma barreira rígida no caminho de criação de processo desanexado, além de recusas amigáveis: enquanto o servidor está ativo, tarefas em segundo plano, `start_batch`, `generate_subtitles`, saída `lrc`/`csv` e opções por requisição que a API HTTP não respeita (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration` etc.) são recusadas com uma mensagem "pare o servidor primeiro" em vez de degradar silenciosamente. Configuração: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (padrão 8571, apenas localhost).
-
-**Status — Fase 2 (planejada):** rotear tarefas em segundo plano/`start_batch` pelo servidor residente. Este é o maior ganho de arquivo/throughput e requer a reformulação da camada de tarefas/fila em torno de requisições HTTP em vez de PIDs desanexados (progresso sem PID, cancelamento). Reavaliar após a Fase 1 ser lançada.
+**TinyDiarize.** Suporte a `--tinydiarize` com modelos habilitados para `tdrz`. Ao contrário do flag `--diarize` estéreo (v2.2.0), o TinyDiarize marca turnos de fala em gravações **mono** e não precisa de nada além do arquivo de modelo — sem Python, sem serviço externo.
+- Parâmetro `tinydiarize` em `transcribe_audio` e `generate_subtitles` (modos de bloqueio e segundo plano); `--tinydiarize` encaminhado por ambos os construtores de argumentos.
+- `small.en-tdrz` adicionado ao `MODEL_REGISTRY` para que `download_model` possa buscá-lo nos namespaces confiáveis existentes do Hugging Face.
 
 ---
 
-## Planejado — v2.6.0: TinyDiarize (turnos de fala em mono, zero dependências extras)
+## Planejado — v2.6.0: Servidor de modelo persistente — Fase 2
 
-Suporte a `--tinydiarize` com variantes de modelo habilitadas para `tdrz` (ex.: `ggml-small.en-tdrz.bin`). Ao contrário do flag `--diarize` estéreo (v2.2.0), o TinyDiarize marca turnos de fala em gravações **mono** e não precisa de nada além do arquivo de modelo — sem Python, sem serviço externo.
+Rotear tarefas em segundo plano e `start_batch` pelo servidor residente. A Fase 1 (v2.5.0) cobre apenas a transcrição em modo de bloqueio; este é o maior ganho de arquivo/throughput, e requer a reformulação da camada de tarefas/fila em torno de requisições HTTP em vez de PIDs desanexados — rastreamento de progresso sem um PID e cancelamento baseado em HTTP.
 
-**Escopo:**
-- Adicionar a(s) variante(s) de modelo `tdrz` ao `MODEL_REGISTRY` para que `download_model` possa buscá-las nos namespaces confiáveis existentes do Hugging Face.
-- Encaminhar uma opção `tinydiarize` por `buildArgs` e `spawnDetached` para que funcione nos modos de bloqueio, segundo plano e lote.
+As **restrições de design** do servidor residente estabelecidas na v2.5.0 continuam a reger a Fase 2 — vinculação apenas a localhost, ciclo de vida explícito, fallback gracioso de uma passagem e barreiras de privacidade/consentimento inalteradas. A Fase 2 adiciona o roteamento de tarefas/fila sem relaxar nenhuma delas.
 
-**Status:** ✅ Implementado (aguardando release) — parâmetro `tinydiarize` em `transcribe_audio` e `generate_subtitles` (funciona nos modos de bloqueio e segundo plano), `--tinydiarize` encaminhado por ambos os construtores de argumentos e `small.en-tdrz` adicionado ao `MODEL_REGISTRY` para `download_model`. Fiel ao ethos: local em primeiro lugar, zero dependências extras.
+**Status:** Planejado.
 
 ---
 
@@ -188,9 +183,56 @@ Uma ferramenta autônoma para pesquisar uma frase ou padrão em cada transcriç�
 
 ---
 
-## Planejado — v2.8.0: Formatos de saída aprimorados e integração
+## Planejado — v2.8.0: Saída importável por editores e formatos de integração
 
-Saída expandida para fluxos de trabalho de análise e integração downstream. Uma lacuna concreta a fechar: a saída JSON atualmente não é suportada no modo em segundo plano (cai de volta para texto). JSON em nível de palavra para alinhamento de clipes e outros formatos de integração a serem definidos com base no feedback dos usuários.
+Transformar transcrições em artefatos que um editor de vídeo importa diretamente, para que a transcrição alimente a edição em vez de parar em um arquivo de texto — a motivação central do projeto: tornar utilizável um grande arquivo de material bruto para um criador solo.
+
+- **Marker CSV primeiro** — inícios de segmento como um CSV de marcadores/capítulos que Premiere, Resolve e YouTube importam nativamente. Entrega a maior parte do valor de "colocar no meu editor" a uma fração do custo e da fragilidade de versão de um formato de linha do tempo completo.
+- **Dados de temporização em nível de palavra** — expor o JSON de token completo do whisper.cpp (`--output-json-full` / `-ojf`) e os carimbos de tempo de palavra alinhados por DTW (`--dtw <preset>`, correspondido automaticamente ao modelo ativo; existem presets para cada família, incluindo `large.v3.turbo`, e se aplicam a modelos quantizados). Esta é a camada de temporização precisa sobre a qual se apoiam o SRT em nível de palavra, o posicionamento de marcadores e o alinhamento de clipes; o JSON por token também carrega valores de confiança para quem os quiser. Nota: `--dtw` é um **flag de tempo de carga/contexto** (definido na inicialização do modelo, não por requisição), então vive no caminho da CLI de uma passagem — a API `/inference` do `whisper-server` residente não pode aplicá-lo por requisição, consistente com a recusa em nível de palavra no modo servidor do v2.5.0.
+- **Fechar a lacuna de JSON em segundo plano** — o JSON atualmente cai de volta para texto no modo em segundo plano.
+- **FCPXML / EDL — adiado:** verboso, sensível a versão e puxa para o escopo de integração com editores. Revisitar apenas se o marker CSV se mostrar insuficiente.
+
+**Limite de escopo:** isto gera arquivos que o editor *importa* — não automatiza a interface do editor. O intercâmbio padrão é fiel ao ethos e leve em dependências; controlar a aplicação é uma preocupação separada.
+
+Combina com a v2.7.0: pesquisar o arquivo para encontrar o momento, depois entregar ao editor um arquivo de marcadores para saltar direto até ele.
+
+---
+
+## Planejado — v2.9.0: Qualidade e ajuste da transcrição
+
+Profundidade em precisão e controle da transcrição — todos são passthroughs de zero dependências de flags do whisper.cpp que o wrapper ainda não expõe. Cada opção aqui é um parâmetro de transcrição de uma passagem: sem sobrecarga adicional de chamadas de ferramenta, totalmente funcional para usuários do plano gratuito.
+
+- **Ajuste de VAD** — os controles de detecção de atividade de voz (`--vad-threshold`, duração mín. de fala / mín. de silêncio / máx. de fala, speech-pad, samples-overlap). O VAD já está ativo mas não é ajustável; estes corrigem os comportamentos de super e subsegmentação por trás da maioria das reclamações de qualidade do mundo real.
+- **Supressão de tokens de não fala** (`--suppress-nst`) — descartar artefatos `[music]` / de ruído para transcrições mais limpas.
+- **Apenas detecção de idioma** (`--detect-language`) — uma sonda barata "que idioma é este?" que retorna sem uma passagem completa de transcrição. Valiosa para o público multilíngue e para roteamento antes da transcrição.
+- **Limiares de robustez / decodificação** — `--entropy-thold`, `--logprob-thold`, `--word-thold`, `--no-fallback`, `--temperature-inc`, `--carry-initial-prompt`, `--suppress-regex` para áudio difícil.
+- **Controles de desempenho** — flash attention (agora **ativado por padrão** no whisper.cpp atual; expor o caminho de desativação `--no-flash-attn` / `-nfa` em vez de tratá-lo como opcional), apenas CPU (`--no-gpu`), tamanho do contexto de áudio (`--audio-ctx`).
+
+**Status:** Planejado.
+
+---
+
+## Planejado — v3.0.0: Suíte de pós-processamento de legendas
+
+Uma camada de lote em TypeScript puro sobre o SRT / VTT / JSON que o servidor já emite — sem retranscrição, sem novas dependências, um único parser/serializer compartilhado. Espelha a cadeia de "conversão em lote" de editores de legenda dedicados (Subtitle Edit, Aegisub), que nenhum MCP de transcrição concorrente oferece. A passagem de reparo de temporização em particular mira os defeitos que a saída bruta do Whisper exibe — cues em branco no silêncio, segmentos sobrepostos ou curtos demais, duplicatas de loop de repetição, linhas longas demais — para que a suíte limpe a *própria* saída deste servidor, não apenas arquivos importados.
+
+- **Reparo e validação de temporização** — impor duração mín. / máx. de cue; corrigir cues sobrepostos; aplicar um intervalo mínimo entre cues; preencher intervalos abaixo do limiar (estender-para-o-próximo); descartar cues vazios; mesclar cues duplicados (loops de repetição do whisper); limitar a duas linhas; ordenar + renumerar. Além de um **relatório de lint** não mutante que sinaliza violações de velocidade de leitura por cue (CPS), caracteres por linha e contagem de linhas contra um perfil selecionável (ex.: YouTube 42 CPL / 20 CPS, Netflix 42 / 17) — o entregável que os editores de fato querem antes da importação.
+- **Retemporização** — deslocar / mover todos os cues; retemporizar por taxa de quadros (ex.: 23,976 ↔ 25).
+- **Refluxo** — mesclar cues curtos; dividir linhas longas até um máximo de caracteres por linha / caracteres por segundo, equilibrando as duas linhas em vez de uma divisão gulosa.
+- **Conversão de formato** — converter arquivos existentes entre SRT / VTT / LRC / CSV / Markdown / texto simples, além de saída ASS/SSA (com estilo padrão), sem retranscrever. Normalização de UTF-8 / fim de linha na gravação (satisfaz o requisito de UTF-8 do YouTube, previne mojibake na reimportação).
+- **Limpeza de texto** — buscar/substituir (regex opcional), remoção de palavras de preenchimento a partir de uma wordlist estática (não um LLM), normalização de maiúsculas/minúsculas, remoção de anotações para deficientes auditivos. Estritamente mecânico — qualquer coisa que exija julgamento (reparo de OCR, inferência de pontuação) fica de fora; o Claude hospedeiro cuida disso no texto retornado.
+- **Formatação de rótulos de falante** — formatar turnos existentes de estéreo / TinyDiarize como blocos prefixados por falante.
+- **Estatísticas de resumo** — contagem de palavras, duração, WPM, CPS médio, proporção de silêncio.
+
+**Restrições de design:**
+- TypeScript puro sobre o SRT / VTT / JSON que o servidor já emite — sem retranscrição, sem novas dependências de runtime, um único parser/serializer compartilhado.
+- Opera apenas em arquivos de legenda/transcrição existentes — nunca invoca o whisper ou o ffmpeg, nunca toca no áudio.
+- Determinístico e baseado em regras apenas — sem LLM, sem nuvem, sem reparo "inteligente". Qualquer coisa que exija julgamento (correções de OCR, inferência de pontuação) fica de fora; o Claude hospedeiro cuida disso no texto retornado.
+- Não destrutivo — grava novos arquivos; nunca sobrescreve um arquivo fonte no local sem confirmação explícita do usuário.
+- A passagem de lint / validação é não mutante — ela reporta violações, nunca reescreve silenciosamente.
+- Apenas formatos de intercâmbio padrão — nunca controla a interface de um editor.
+
+**Status:** Planejado.
 
 ---
 
@@ -214,10 +256,10 @@ A metade mais pesada das ferramentas de projeto, uma vez que a Pesquisa de trans
 ### Limpeza de transcrições baseada em regras
 Pós-processamento local e determinístico — remoção de palavras de preenchimento e falsos começos, controlado pelo usuário. Mais valioso para usuários do modo de privacidade, onde a transcrição nunca chega ao Claude para limpeza. Deliberadamente restrito: quebra de parágrafos e segmentação de tópicos são coisas que o Claude já faz bem no texto retornado, e a exportação para PDF/DOCX é escopo excessivo em direção à geração de documentos — ambos fora do escopo aqui.
 
-**Status:** Em consideração.
+**Status:** Promovido — a limpeza determinística está agendada na Suíte de pós-processamento de legendas da v3.0.0; as observações de fora do escopo (quebra de parágrafos, PDF/DOCX) continuam válidas.
 
 ### Diarização de falantes (pyannote-audio)
-Diarização de falantes mono completa com rótulos de ID de falante em toda a gravação. Diferente do flag `--diarize` estéreo integrado (v2.2.0) e do TinyDiarize (v2.6.0).
+Diarização de falantes mono completa com rótulos de ID de falante em toda a gravação. Diferente do flag `--diarize` estéreo integrado (v2.2.0) e do TinyDiarize (v2.5.0).
 
 **Implementação:** requer [pyannote-audio](https://github.com/pyannote/pyannote-audio) — biblioteca Python com requisito de token de acesso do Hugging Face, uma pilha de dependências completamente separada. Despriorizado: entra em conflito com o ethos local em primeiro lugar / zero dependências, e o TinyDiarize já cobre o caso mono sem dependências. Se for realizado, será distribuído como um complemento avançado opcional com sua própria documentação de configuração, nunca no pacote principal.
 
@@ -240,7 +282,7 @@ Funcionalidades excluídas intencionalmente, registradas aqui para que a decisã
 A transcrição em tempo real de um microfone ao vivo estava anteriormente prevista para a v2.7.0. Cortada porque entra em conflito com o design central do projeto:
 - **Incompatibilidade de arquitetura:** o MCP é requisição/resposta, não streaming. A captura ao vivo exigiria polling contínuo (consome orçamento de API) ou uma chamada de bloqueio longo que atinge a guarda de tempo limite em primeiro plano do v2.4.0.
 - **Princípios de instância única / minimizar API:** retornar segmentos contínuos ao Claude é uma constante enxurrada de chamadas de ferramentas — o oposto de "funcional para usuários do plano gratuito" — e um processo de streaming de longa duração sobrecarrega o bloqueio de processo.
-- **Dependência externa:** dependeria de uma API de streaming estável do whisper.cpp que não é nossa para agendar.
+- **Dependência externa:** exigiria uma dependência externa adicional.
 
 A legendagem ao vivo é uma categoria de produto distinta (baixa latência, gerenciamento de dispositivos, VAD) de uma ferramenta de transcrição de arquivos/lote. Usuários que precisam disso são melhor atendidos por uma ferramenta dedicada em tempo real.
 
@@ -261,7 +303,7 @@ O whisper-windows-mcp usa licença dupla.
 
 **Uso não comercial:** MIT — gratuito para uso pessoal, educacional e não comercial. Veja [LICENSE](LICENSE).
 
-**Uso comercial:** É necessário um contrato de licença comercial separado para qualquer uso empresarial, profissional ou que gere receita. Veja [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+**Uso comercial:** É necessário um contrato de licença comercial separado para qualquer uso empresarial, profissional ou que gere receita. Veja [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) para termos e informações de contato.
 
 ---
 

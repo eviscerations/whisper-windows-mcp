@@ -16,9 +16,9 @@ Aceste principii guvernează fiecare decizie din acest proiect și au prioritate
 
 **Control explicit al utilizatorului.** Fără operațiuni în masă silențioase. Acțiunile distructive sau ireversibile necesită confirmare. Utilizatorul trebuie să știe întotdeauna ce se va întâmpla înainte să se întâmple.
 
-**Căi sigure pentru Unicode.** Toată I/O de fișiere trebuie să gestioneze corect numele de fișiere non-ASCII, inclusiv română, japoneză, chineză, emoji, paranteze și alte caractere speciale.
+**Căi sigure pentru Unicode.** Toată I/O de fișiere trebuie să gestioneze corect numele de fișiere non-ASCII, inclusiv japoneză, chineză, emoji, paranteze și alte caractere speciale.
 
-**Modular și combinabil.** Instrumentele sunt independente. Utilizatorii folosesc ce au nevoie. Nicio funcție nu ar trebui să necesite alta, cu excepția cazurilor inevitabile.
+**Modular și combinabil.** Instrumentele sunt independente. Utilizatorii folosesc ce au nevoie. Nicio funcție nu ar trebui să necesite alta pentru a funcționa, cu excepția cazurilor inevitabile.
 
 **Optimizare înainte de funcții.** Când ai îndoieli între adăugarea unei funcții și reducerea sarcinii sistemului sau a numărului de apeluri API — reduce sarcina. Sesiunile mari de optimizare sunt costisitoare. Proiectează arhitectura corect de la început.
 
@@ -32,7 +32,7 @@ Adăugat verificarea `isWhisperRunning()` folosind `tasklist /FI` înainte de a 
 ### ✅ v1.4.0 — Accelerare GPU Vulkan
 Compilat whisper.cpp din sursă cu `-DGGML_VULKAN=ON` folosind VS Build Tools 2022 și Vulkan SDK. Binarele Vulkan precompilate distribuite ca `whisper-vulkan-win-x64.zip`.
 
-**Rezultate pe AMD Radeon RX Vega 56:** Utilizare medie GPU ~16%. Fișier de 58 minute finalizat în ~4,5 minute pe GPU față de ~88 minute numai CPU.
+**Rezultate pe AMD Radeon RX Vega 56:** Utilizare medie GPU ~16%. Un fișier de 58 minute se finalizează în ~4,5 minute pe GPU față de ~88 minute numai CPU.
 
 ### ✅ v1.5.0 — Diagnosticare sistem
 Instrument `check_system`: detectare GPU prin `wmic`, verificare DLL Vulkan, raportare VRAM, recomandare dimensiune model.
@@ -41,86 +41,90 @@ Instrument `check_system`: detectare GPU prin `wmic`, verificare DLL Vulkan, rap
 Instrument `analyze_media` prin FFprobe: durată, dimensiune, codec, stare transcriere, estimări timp CPU și GPU. Scanare fișier unic sau folder cu opțiuni de sortare.
 
 ### ✅ v1.7.0 — Transcriere în fundal + Vizibilitate progres
-Arhitectură proces detașat: `transcribe_audio` cu `background=true` pornește whisper ca proces detașat și returnează imediat ID-ul sarcinii. `check_progress` parsează marcajele de timp ale segmentelor stderr whisper pentru procent și ETA în timp real.
+Arhitectură cu proces detașat: `transcribe_audio` cu `background=true` pornește whisper ca proces detașat și returnează imediat un ID de sarcină. `check_progress` parsează marcajele de timp ale segmentelor din stderr-ul whisper pentru procent și ETA în timp real.
 
 ### ✅ v1.8.0 — Lot secvențial cu validare
-`start_batch` și `check_batch_progress`: procesare secvențială automată, validare transcriere (detectare ieșire goală/scurtă), avansare automată coadă, marcaje de timp progres per fișier.
+`start_batch` și `check_batch_progress`: procesare secvențială automată, validare transcriere (detectare ieșire goală/scurtă), avansare automată a cozii, marcaje de timp progres per fișier.
 
 ### ✅ v1.9.0 — Suport multilingv și traducere
-`generate_subtitles` cu detecție `language=auto` și ieșire SRT dublă `translate_to_english=true`. Adăugat suport formate `.3gp` și `.ts`. `language=auto` disponibil și în `transcribe_audio`.
+`generate_subtitles` cu detecție `language=auto` și ieșire SRT dublă `translate_to_english=true`. Adăugat suport pentru formatele `.3gp` și `.ts`. `language=auto` disponibil și în `transcribe_audio`.
 
-**Limitare cunoscută:** Traducerea încorporată Whisper țintește doar engleza. Necesită model `large-v3` pentru limbi non-engleze — modelele numai engleză (`*.en.bin`) generează `[FOREIGN]` pentru audio non-englezesc.
+**Limitare cunoscută:** Traducerea încorporată a Whisper țintește doar engleza. Necesită modelul `large-v3` pentru limbi non-engleze — modelele numai engleză (`*.en.bin`) generează `[FOREIGN]` pentru audio non-englezesc.
 
 ### ✅ v2.0.0 — Căi sigure Unicode + SRT în fundal
-**Nume fișiere Unicode:** Fișierele cu caractere non-ASCII în nume cauzau eșecuri silențioase ale transcrierii în fundal. Remediat prin direcționarea tuturor ieșirilor printr-o cale temporară igienizată bazată pe ID sarcină, apoi mutarea rezultatului la destinația corectă după finalizare.
+**Nume de fișiere Unicode:** Fișierele cu caractere non-ASCII în nume cauzau eșecuri silențioase ale transcrierii în fundal. Remediat prin direcționarea tuturor ieșirilor printr-o cale temporară igienizată bazată pe ID-ul sarcinii, apoi mutarea rezultatului la destinația corectă după finalizare.
 
-**SRT în modul fundal:** `spawnDetached` anterior codifica rigid `-otxt` indiferent de formatul solicitat. Remediat prin adăugarea parametrului `outputFormat` la `spawnDetached`, suportând ieșire `text` și `srt` în modul fundal.
+**SRT în modul fundal:** `spawnDetached` codifica anterior rigid `-otxt` indiferent de formatul solicitat. Remediat prin adăugarea parametrului `outputFormat` la `spawnDetached`, suportând ieșire `text` și `srt` în modul fundal.
 
-### ✅ v2.0.1 — Corecții erori (incluse în v2.2.0)
-- `--max-context 0` codificat rigid în `buildArgs` și `spawnDetached` — previne buclele de halucinație pe audio lung.
-- `--no-speech-thold 0.6` codificat rigid în ambele funcții — segmentele sub pragul de încredere sunt tratate ca tăcere.
+### ✅ v2.0.1 — Corecții erori (livrate în v2.2.0)
+- `--max-context 0` codificat rigid atât în `buildArgs`, cât și în `spawnDetached` — previne buclele de halucinație pe audio de lungă durată.
+- `--no-speech-thold 0.6` codificat rigid în ambele funcții — segmentele sub pragul de încredere sunt tratate ca tăcere în loc de conținut halucinat.
 - Validare cale (`validateInputPath`) — respinge căile UNC și traversările `..`.
-- Gardă dimensiune fișier `MAX_FILE_SIZE_MB = 10240`.
-- Comentariu securitate injecție transcriere în `transcribeSingle`.
-- Comandă CLI lot coruptă corectată în TROUBLESHOOTING.md.
+- Gardă de dimensiune fișier `MAX_FILE_SIZE_MB = 10240`.
+- Comentariu de securitate privind injecția de transcriere în `transcribeSingle`.
+- Comandă CLI de lot coruptă corectată în TROUBLESHOOTING.md.
 
-### ✅ v2.1.0 — Suită de gestionare modele (inclusă în v2.2.0)
+### ✅ v2.1.0 — Suită de gestionare a modelelor (livrată în v2.2.0)
 - `WHISPER_MODEL` schimbat din `const` în `let` (mutabil în sesiune).
 - `MODEL_REGISTRY` — 16 modele, variante de precizie completă și cuantizate, URL-uri de descărcare Hugging Face.
 - `ALLOWED_HF_PREFIXES` — lista de permise URL care limitează descărcările la spațiile de nume `ggerganov/whisper.cpp` și `ggml-org`.
 - Instrument `list_models` — scanează directorul de modele, arată modelul activ, dimensiuni, cazuri de utilizare, descărcări disponibile.
-- Instrument `download_model` — descarcă de la Hugging Face prin `https` integrat Node.js, redenumire atomică.
-- Instrument `switch_model` — validează extensia `.bin`, restricție director, verificare blocare proces.
-- `recommendedModel()` actualizat pentru a recomanda `large-v3-turbo` pentru VRAM 6GB+.
+- Instrument `download_model` — descarcă de la Hugging Face prin modulul `https` integrat în Node.js, redenumire atomică.
+- Instrument `switch_model` — validează extensia `.bin`, restricția de director, verificarea blocării proceselor.
+- `recommendedModel()` actualizat pentru a recomanda `large-v3-turbo` pentru VRAM de 6GB+.
 
 ### ✅ v2.2.0 — Extindere calitate, parametri și hardware
-- Interfață `WhisperOptions` înlocuind argumentele poziționale în `buildArgs`.
+- Interfața `WhisperOptions` înlocuind argumentele poziționale în `buildArgs`.
 - Parametri noi în `transcribe_audio`: `temperature`, `prompt`, `condition_on_prev_text`, `no_speech_thold`, `beam_size`, `best_of`, `gpu_device`, `processors`, `word_timestamps`, `max_segment_length`, `split_on_word`, `diarize`, `vad_model`, `offset_t`, `duration`.
 - Parametri noi în `generate_subtitles`: `temperature`, `prompt`, `beam_size`, `best_of`, `diarize`, `vad_model`.
-- `spawnDetached` refactorizat — toate indicatoarele de calitate sunt acum aplicate în modul fundal/lot.
-- Ieșire lot corectată — `readBatchProgress` acum mută ieșirea temporară la destinația finală înainte de validare.
+- `spawnDetached` refactorizat — toate indicatoarele de calitate aplicate în modul fundal/lot.
+- Ieșire de lot corectată — `readBatchProgress` mută acum ieșirea temporară la destinația finală înainte de validare.
 
-**Notă compatibilitate indicatoare:** `gpu_device` / `--device` a fost adăugat în whisper.cpp v1.8.4. Binarul Vulkan precompilat în versiuni este de generație v1.8.3 — acest parametru este acceptat de instrument dar nu va avea efect până când utilizatorii nu actualizează la un binar v1.8.4+.
+**Notă compatibilitate indicatoare:** `gpu_device` / `--device` a fost adăugat în whisper.cpp v1.8.4. Binarul Vulkan precompilat din versiuni este de generație v1.8.3 — acest parametru este acceptat de instrument, dar nu va avea efect până când utilizatorii nu actualizează la un binar v1.8.4+.
 
 ### ✅ v2.2.2 — Patch
 - Corecție licență duală — LICENSE și LICENSE-COMMERCIAL.md corectate.
 - Corecții minore de documentație.
 
-### ✅ v2.3.0 — Avansare automată lot, arhitectură confidențialitate, extindere formate de ieșire
+### ✅ v2.3.0 — Avansare automată a lotului, arhitectură de confidențialitate, extindere formate de ieșire
 
-**Avansare automată lot (corecție bug critic):** `start_batch` necesita anterior interogare activă pentru a avansa coada. Un handler `on('exit')` este acum atașat fiecărui proces copil whisper-cli pornit. Când procesul iese, lotul avansează automat prin callback-ul de ieșire cu zero costuri de interogare și zero apeluri API consumate. Un mutex previne lansarea dublă între handler-ul de ieșire concurrent și apelurile `check_batch_progress`.
+**Avansare automată a lotului (corecție bug critic):** `start_batch` necesita anterior interogare activă pentru a avansa prin coadă. Un handler `on('exit')` este acum atașat fiecărui proces copil whisper-cli pornit. Când procesul iese, lotul avansează automat imediat prin callback-ul de ieșire, cu zero costuri de interogare și zero apeluri API consumate. Un mutex previne lansarea dublă între handler-ul de ieșire concurent și apelurile `check_batch_progress`.
 
-**Arhitectură confidențialitate:**
-- Variabila de mediu `WHISPER_PRIVACY_MODE` — când `true`, toate răspunsurile instrumentelor returnează doar metadate (numele fișierului, numărul de cuvinte, calea de salvare). Niciun text de transcriere nu este transmis vreodată la API-ul Claude. Transcrierile există doar ca fișiere locale.
-- Variabila de mediu `WHISPER_CONSENT_ACKNOWLEDGED` — când `true`, suprimă poarta de consimțământ unică per sesiune pentru conținut non-sensibil.
+**Arhitectură de confidențialitate:**
+- Variabila de mediu `WHISPER_PRIVACY_MODE` — când este `true`, toate răspunsurile instrumentelor returnează doar metadate (numele fișierului, numărul de cuvinte, calea de salvare). Niciun text de transcriere nu este transmis vreodată la API-ul Claude. Transcrierile există doar ca fișiere locale.
+- Variabila de mediu `WHISPER_CONSENT_ACKNOWLEDGED` — când este `true`, suprimă poarta de consimțământ unică per sesiune pentru conținut non-sensibil.
 - Parametrul `privacy_mode` per apel în `transcribe_audio`, `transcribe_batch`, `start_batch` și `check_progress`. Suprascrie variabila de mediu globală în ambele direcții. Nu necesită repornire pentru a comuta per apel.
-- Poarta modului de confidențialitate (`checkPrivacyGate()`) — se activează înainte de fiecare operațiune când modul de confidențialitate efectiv este activ.
-- Poarta de consimțământ sesiune (`transcriptPolicy()`) — se activează o dată per sesiune înainte de primul apel care returnează transcriere în modul standard.
-- `PRIVACY.md` — documentație completă de conformitate acoperind HIPAA, GDPR, privilegiu avocat-client, FERPA, SOX, PCI-DSS și NDA/secret comercial.
+- Poarta modului de confidențialitate (`checkPrivacyGate()`) — se activează înainte de fiecare operațiune când modul de confidențialitate efectiv este activ. Se armează la primul apel (afișează dezvăluirea), se eliberează la al doilea (permite). Se resetează după fiecare operațiune. Complet independentă de poarta de consimțământ de sesiune.
+- Poarta de consimțământ de sesiune (`transcriptPolicy()`) — se activează o dată per sesiune înainte de primul apel care returnează transcriere în modul standard. Consumată de indicatorul `sessionConsentGiven`.
+- `PRIVACY.md` — documentație completă de conformitate acoperind HIPAA, GDPR, privilegiul avocat-client, FERPA, SOX, PCI-DSS și NDA/secret comercial.
+- Avertismente de confidențialitate în descrierea instrumentelor pe toate instrumentele care returnează transcriere.
 
 **Extindere formate de ieșire:**
-- `vtt` — ieșire WebVTT prin `-ovtt`. Disponibil în `transcribe_audio`, `generate_subtitles`, `start_batch` și modul fundal.
-- `lrc` — format LRC versuri/karaoke prin `-olrc`. Disponibil în `transcribe_audio` și modul fundal.
+- `vtt` — ieșire de subtitrare WebVTT prin `-ovtt`. Disponibil în `transcribe_audio`, `generate_subtitles`, `start_batch` și modul fundal.
+- `lrc` — format LRC de versuri/karaoke prin `-olrc`. Disponibil în `transcribe_audio` și modul fundal.
 - `csv` — CSV cu marcaje de timp prin `-ocsv`. Disponibil în `transcribe_audio` și modul fundal.
-- `output_format` implicit schimbat din `"text"` în `"timestamps"` în toate instrumentele și căile de cod.
+- `output_format` implicit schimbat din `"text"` în `"timestamps"` în toate instrumentele și căile de cod. Textul simplu este acum opțional.
 
 **Corecții bug:**
-- Bug 1: `output_format` nu era transmis sarcinilor în fundal — implicit `"text"` era folosit indiferent de formatul solicitat. Remediat prin schimbarea implicită la `"timestamps"` și transmitere corectă.
-- Bug 2: `catch {}` silențios în operațiunea de mutare a ieșirii sarcinii în fundal înghițea eșecurile. Adăugat verificare explicită `existsSync` cu mesaj de eșec detaliat după mutare.
+- Bug 1: `output_format` nu era transmis sarcinilor în fundal — implicitul `"text"` era folosit indiferent de formatul solicitat. Remediat prin schimbarea implicitului la `"timestamps"` și transmiterea corectă.
+- Bug 2: `catch {}` silențios în operațiunea de mutare a ieșirii sarcinii în fundal înghițea eșecurile. Adăugat o verificare explicită `existsSync` cu mesaj de eșec detaliat după mutare.
 - Bug 3: Comentariu de design adăugat la punctul de lansare în fundal documentând de ce poarta de consimțământ este intenționat amânată la `check_progress` pentru sarcinile în fundal fără mod de confidențialitate.
 
 **Suplimentar:**
-- Curățare automată director temporar — `cleanupOldJobFiles()` rulează la pornire, șterge fișierele `.json` și `.log` mai vechi de 7 zile din `%TEMP%\whisper-mcp-jobs\`.
+- Curățare automată a directorului temporar — `cleanupOldJobFiles()` rulează la pornire, șterge fișierele `.json` și `.log` mai vechi de 7 zile din `%TEMP%\whisper-mcp-jobs\`.
 - `check_config` raportează acum starea modului de confidențialitate.
 - Jurnalul de pornire raportează modul de confidențialitate activat/dezactivat.
+- Interfața `Job` extinsă cu câmpul `privacyMode: boolean`.
+- Interfața `BatchState` extinsă cu câmpul `privacyMode: boolean`.
+- Tipul `BackgroundFormat` exclude `json` (json în modul fundal rămâne nesuportat — revine la `text`).
 
-### ✅ v2.4.0 — Întărire, gardă de expirare în prim-plan, suită de teste și CI
+### ✅ v2.4.0 — Întărire, gardă de prim-plan, suită de teste și CI
 
 O trecere de securitate/robustețe; migrarea la Bun planificată a fost mutată la v2.5.0.
 
 **Securitate și corectitudine:**
-- Remediere a izolării căilor în `switch_model` — un director cu prefix-frate (de ex. `…\models-evil`) putea anterior satisface verificarea „în interiorul directorului de modele” printr-un `startsWith` naiv; înlocuit cu izolare normalizată bazată pe `relative()`. Închide evadarea pe care o descrie SECURITY.md.
-- Bariera de confidențialitate/consimțământ cheiată **per operațiune** (instrument + argumente) — confirmarea unei transcrieri nu mai poate satisface bariera unei alte operațiuni.
+- Remediere a izolării căilor în `switch_model` — un director cu prefix-frate (de ex. `…\models-evil`) putea anterior satisface verificarea „în interiorul directorului de modele" printr-un `startsWith` naiv; înlocuit cu izolare normalizată, bazată pe `relative()`. Închide evadarea pe care o descrie SECURITY.md.
+- Poarta de confidențialitate/consimțământ cheiată **per operațiune** (instrument + argumente) — confirmarea unei transcrieri nu mai poate satisface poarta unei alte operațiuni.
 - `download_model` respinge descărcările trunchiate (verificare Content-Length) înainte de a promova un fișier `.part`. (Verificarea completă a digestului SHA256 este urmărită pentru o trecere ulterioară.)
 - Coerciția intrărilor — parametrii numerici de instrument care nu sunt numere reale sunt eliminați în loc să fie predați lui whisper-cli ca `NaN`.
 
@@ -134,45 +138,40 @@ O trecere de securitate/robustețe; migrarea la Bun planificată a fost mutată 
 - Variabila de mediu `WHISPER_GPU_DEVICE`, iar `gpu_device` este acum transmis prin `generate_subtitles` și prin trecerea de detectare a limbii (anterior doar `transcribe_audio`). `check_config` raportează dispozitivul activ. `check_system` nu mai raportează greșit o problemă de driver atunci când `wmic` (depreciat în Windows 11 24H2+) nu returnează nimic.
 
 **Calitate:**
-- O suită de teste unitare `node:test` peste logica pură (izolarea căilor, cheierea barierei, scrieri atomice, coerciția intrărilor, estimarea expirării), zero dependențe adăugate, plus un flux de lucru CI GitHub Actions care o rulează la fiecare push/PR.
+- O suită de teste unitare `node:test` peste logica pură (izolarea căilor, cheierea porții, scrieri atomice, coerciția intrărilor, estimarea expirării), zero dependențe adăugate, plus un flux de lucru CI GitHub Actions care o rulează la fiecare push/PR.
 
 **Identificat pentru o versiune viitoare:** o cale de model persistentă (de ex. `whisper-server` din whisper.cpp) pentru a elimina costul de reîncărcare a modelului plătit la fiecare transcriere — un câștig mare de debit pentru lucrul în lot/de arhivă.
 
----
+### ✅ v2.5.0 — Server de model persistent + TinyDiarize
 
-## Planificat — v2.5.0: Server de model persistent
-
-Menține modelul Whisper rezident între transcrieri în loc să-l reîncarci la fiecare invocare.
-
-Acesta este cel mai mare câștig de debit disponibil. whisper-cli este unic: reîncarcă modelul complet la fiecare apel, iar v2.4.0 a măsurat acea reîncărcare la ~110s pe un GPU cu memorie limitată — o taxă fixă plătită per fișier, independentă de lungimea audio. Pentru sarcinile de lot și de arhivă domină timpul de execuție mai mult decât transcrierea în sine.
-
-**Abordare:** rulează `whisper-server` (HTTP) livrat cu whisper.cpp ca un singur proces de lungă durată cu modelul păstrat în memorie. Serverul MCP trimite fiecare transcriere către el prin localhost și primește rezultatele înapoi fără a plăti din nou costul de reîncărcare.
-
-**Reconciliere cu „o singură instanță whisper în orice moment":** principiul este păstrat, mecanismul evoluează. Serverul rezident *devine* singura instanță; blocarea proceselor se schimbă din „nu crea niciodată un al doilea whisper-cli" în „serializează cererile față de singurul server rezident". Nu se introduce nicio concurență.
+**Server de model persistent (Faza 1).** whisper-cli este unic: reîncarcă modelul complet la fiecare apel — v2.4.0 a măsurat acea reîncărcare la ~110s pe un GPU cu memorie limitată, o taxă fixă per fișier care domină timpul de execuție pentru lucrul în lot/de arhivă. v2.5.0 adaugă un mod opțional cu model rezident care păstrează modelul în memorie între transcrieri.
+- Instrument `whisper_server` (`start` / `stop` / `status`). Serverul rezident *devine* singura instanță, păstrând regula unei singure instanțe whisper: cererile se serializează față de el, fără a introduce concurență.
+- `transcribe_audio` și `transcribe_batch` în mod blocant sunt direcționate prin serverul rezident prin localhost (`127.0.0.1`) via `POST /inference`, sărind costul de reîncărcare. Garda de expirare în prim-plan este sărită în modul server (nicio reîncărcare de plătit).
+- `switch_model` schimbă la cald modelul rezident prin `POST /load` fără repornire. `check_config` raportează starea serverului; serverul deținut este oprit la închidere pentru a elibera VRAM.
+- Regula un-singur-motor / VRAM-partajat este aplicată cu o protecție dură în calea de lansare detașată plus refuzuri prietenoase: cât timp serverul este pornit, sarcinile în fundal, `start_batch`, `generate_subtitles`, ieșirea `lrc`/`csv` și opțiunile per cerere pe care API-ul HTTP nu le onorează (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration` etc.) sunt refuzate cu un mesaj „oprește serverul mai întâi" în loc să degradeze în tăcere.
+- Configurare: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (implicit 8571, doar localhost).
 
 **Constrângeri de proiectare:**
 - Ciclu de viață explicit: start / stop / status, cu o verificare de sănătate. Serverul nu este pornit niciodată în tăcere ca efect secundar al unui apel fără legătură.
-- Legat doar la localhost — niciodată o interfață rutabilă. Fără expunere în rețea (coerent cu principiul local-prioritar și cu întărirea din v2.4.0).
+- Legare doar la localhost — niciodată o interfață rutabilă. Fără expunere în rețea (coerent cu principiul local-prioritar și cu întărirea din v2.4.0).
 - Rezervă grațioasă: dacă serverul nu rulează, transcrierea funcționează în continuare prin calea whisper-cli unică existentă. Serverul este o optimizare, nu o dependență obligatorie.
 - `switch_model` reîncarcă modelul în serverul rezident (tot mult mai ieftin amortizat decât reîncărcarea per fișier).
-- Barierele de confidențialitate și consimțământ sunt neschimbate — se află deasupra mecanismului de transcriere.
+- Porțile de confidențialitate și consimțământ sunt neschimbate — se află deasupra mecanismului de transcriere.
 - Selectarea portului cu gestionarea coliziunilor; închidere curată la SIGINT/SIGTERM alături de curățarea existentă a fișierelor temporare.
 
-**Status — Faza 1 ✅ implementată (în așteptarea lansării):** instrumentul `whisper_server` (`start` / `stop` / `status`); `transcribe_audio` și `transcribe_batch` în mod blocant sunt direcționate prin serverul rezident prin localhost (`127.0.0.1`, verificat față de API-ul HTTP actual al `whisper-server` din whisper.cpp); `switch_model` schimbă la cald modelul rezident prin `POST /load` fără repornire; garda de expirare în prim-plan este sărită în modul server (nicio reîncărcare de plătit); `check_config` raportează starea serverului; serverul deținut este oprit la închidere pentru a elibera VRAM. Regula un-singur-motor / VRAM-partajat este aplicată cu o protecție dură în calea de lansare detașată plus refuzuri prietenoase: cât timp serverul este pornit, sarcinile în fundal, `start_batch`, `generate_subtitles`, ieșirea `lrc`/`csv` și opțiunile per cerere pe care API-ul HTTP nu le onorează (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration` etc.) sunt refuzate cu un mesaj „oprește serverul mai întâi" în loc să degradeze în tăcere. Configurare: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (implicit 8571, doar localhost).
-
-**Status — Faza 2 (planificată):** direcționează fundal/`start_batch` prin serverul rezident. Acesta este câștigul mai mare de arhivă/debit și necesită rescrierea stratului de sarcini/coadă în jurul cererilor HTTP în loc de PID-uri detașate (progres fără PID, anulare). Reevaluat după ce Faza 1 este livrată.
+**TinyDiarize.** Suport `--tinydiarize` cu modele activate `tdrz`. Spre deosebire de indicatorul stereo `--diarize` (v2.2.0), TinyDiarize marchează schimbările de vorbitor pe înregistrări **mono** și nu necesită nimic în afara fișierului model — fără Python, fără serviciu extern.
+- Parametrul `tinydiarize` în `transcribe_audio` și `generate_subtitles` (modurile blocant și fundal); `--tinydiarize` conectat prin ambele constructoare de argumente.
+- `small.en-tdrz` adăugat în `MODEL_REGISTRY` astfel încât `download_model` să îl poată prelua din spațiile de nume Hugging Face de încredere existente.
 
 ---
 
-## Planificat — v2.6.0: TinyDiarize (schimbări de vorbitor pe mono, zero dependențe suplimentare)
+## Planificat — v2.6.0: Server de model persistent — Faza 2
 
-Suport `--tinydiarize` cu variante de model activate `tdrz` (ex.: `ggml-small.en-tdrz.bin`). Spre deosebire de indicatorul stereo `--diarize` (v2.2.0), TinyDiarize marchează schimbările de vorbitor pe înregistrări **mono** și nu necesită nimic în afara fișierului model — fără Python, fără serviciu extern.
+Direcționează sarcinile în fundal și `start_batch` prin serverul rezident. Faza 1 (v2.5.0) acoperă doar transcrierea blocantă; acesta este câștigul mai mare de arhivă/debit și necesită rescrierea stratului de sarcini/coadă în jurul cererilor HTTP în loc de PID-uri detașate — urmărirea progresului fără PID și anularea bazată pe HTTP.
 
-**Domeniu:**
-- Adaugă variantele de model `tdrz` în `MODEL_REGISTRY` astfel încât `download_model` să le poată prelua din spațiile de nume Hugging Face de încredere existente.
-- Conectează o opțiune `tinydiarize` prin `buildArgs` și `spawnDetached` astfel încât să funcționeze în modurile blocant, fundal și lot.
+**Constrângerile de proiectare** ale serverului rezident stabilite în v2.5.0 continuă să guverneze Faza 2 — legare doar la localhost, ciclu de viață explicit, rezervă grațioasă unică, și porți de confidențialitate/consimțământ neschimbate. Faza 2 adaugă direcționarea sarcinilor/cozii fără a relaxa vreuna dintre ele.
 
-**Status:** ✅ Implementat (în așteptarea lansării) — parametrul `tinydiarize` în `transcribe_audio` și `generate_subtitles` (funcționează în modurile blocant și fundal), `--tinydiarize` conectat prin ambele constructoare de argumente și `small.en-tdrz` adăugat în `MODEL_REGISTRY` pentru `download_model`. Pe-etos: local-prioritar, zero dependențe suplimentare.
+**Status:** Planificat.
 
 ---
 
@@ -184,9 +183,56 @@ Un instrument independent pentru a căuta o frază sau un tipar în fiecare tran
 
 ---
 
-## Planificat — v2.8.0: Formate de ieșire îmbunătățite și integrare
+## Planificat — v2.8.0: Ieșire importabilă în editor și formate de integrare
 
-Ieșire extinsă pentru fluxurile de lucru de analiză și integrare din aval. Un decalaj concret de închis: ieșirea JSON nu este momentan suportată în modul fundal (revine la text). JSON la nivel de cuvânt pentru alinierea clipurilor și alte formate de integrare urmează să fie definite pe baza feedback-ului utilizatorilor.
+Transformă transcrierile în artefacte pe care un editor video le importă direct, astfel încât transcrierea să alimenteze montajul în loc să se oprească la un fișier text — motivația de bază a proiectului: a face o arhivă mare de material brut utilizabilă pentru un creator individual.
+
+- **Mai întâi CSV cu markere** — începuturile segmentelor ca un CSV de markere/capitole pe care Premiere, Resolve și YouTube îl importă nativ. Oferă cea mai mare parte a valorii „bagă-l în editorul meu" la o fracțiune din costul și fragilitatea de versiune ale unui format de linie de timp complet.
+- **Date de sincronizare la nivel de cuvânt** — expune JSON-ul complet cu token-uri al whisper.cpp (`--output-json-full` / `-ojf`) și marcajele de timp la nivel de cuvânt aliniate DTW (`--dtw <preset>`, potrivite automat cu modelul activ; există presetări pentru fiecare familie, inclusiv `large.v3.turbo`, și se aplică modelelor cuantizate). Acesta este stratul de sincronizare precisă pe care se sprijină SRT la nivel de cuvânt, plasarea markerelor și alinierea clipurilor; JSON-ul per token poartă și valori de încredere pentru oricine le dorește. Notă: `--dtw` este un **indicator de timp de încărcare/context** (setat la inițializarea modelului, nu per cerere), deci trăiește în calea CLI unică — API-ul `/inference` al serverului rezident `whisper-server` nu îl poate aplica per cerere, coerent cu refuzul de nivel-cuvânt din modul server din v2.5.0.
+- **Închiderea decalajului JSON-în-fundal** — JSON revine momentan la text în modul fundal.
+- **FCPXML / EDL — amânat:** prolix, sensibil la versiune și trage spre domeniul integrării cu editorul. De reevaluat doar dacă CSV-ul cu markere se dovedește insuficient.
+
+**Limită de domeniu:** aceasta generează fișiere pe care editorul le *importă* — nu automatizează interfața editorului. Formatele standard de interschimb sunt pe-etos și dependente minim; controlul aplicației este o preocupare separată.
+
+Se combină cu v2.7.0: caută arhiva pentru a găsi momentul, apoi predă editorului un fișier de markere pentru a sări direct la el.
+
+---
+
+## Planificat — v2.9.0: Calitate și reglare a transcrierii
+
+Profunzime pe acuratețea și controlul transcrierii — toate transmiteri fără dependențe ale indicatoarelor whisper.cpp pe care wrapper-ul nu le expune încă. Fiecare opțiune de aici este un parametru de transcriere unic: fără costuri suplimentare de apel de instrument, complet funcțional pentru utilizatorii cu plan gratuit.
+
+- **Reglare VAD** — butoanele de detectare a activității vocale (`--vad-threshold`, durata minimă de vorbire / minimă de tăcere / maximă de vorbire, umplerea vorbirii, suprapunerea eșantioanelor). VAD este deja activ, dar nu reglabil; acestea rezolvă comportamentul de supra- și sub-segmentare din spatele majorității plângerilor de calitate din lumea reală.
+- **Suprimarea token-urilor non-vorbire** (`--suppress-nst`) — elimină artefactele `[music]` / de zgomot pentru transcrieri mai curate.
+- **Doar detectarea limbii** (`--detect-language`) — o sondă ieftină „ce limbă este aceasta?" care returnează fără o trecere de transcriere completă. Valoroasă pentru publicul multilingv și pentru rutare înainte de transcriere.
+- **Praguri de robustețe / decodare** — `--entropy-thold`, `--logprob-thold`, `--word-thold`, `--no-fallback`, `--temperature-inc`, `--carry-initial-prompt`, `--suppress-regex` pentru audio dificil.
+- **Butoane de performanță** — flash attention (acum **activ implicit** în whisper.cpp actual; expune calea de dezactivare `--no-flash-attn` / `-nfa` în loc să o tratezi ca opțională), doar-CPU (`--no-gpu`), dimensiunea contextului audio (`--audio-ctx`).
+
+**Status:** Planificat.
+
+---
+
+## Planificat — v3.0.0: Suită de post-procesare a subtitrărilor
+
+Un strat de lot pur-TypeScript peste SRT / VTT / JSON pe care serverul le emite deja — fără re-transcriere, fără dependențe noi, un singur parser/serializator comun. Reflectă lanțul „conversie în lot" al editorilor de subtitrări dedicați (Subtitle Edit, Aegisub), pe care niciun MCP de transcriere concurent nu îl oferă. Trecerea de reparare a sincronizării în special vizează defectele pe care le prezintă ieșirea brută Whisper — cue-uri goale pe tăcere, segmente suprapuse sau prea scurte, duplicate din bucle de repetare, linii prea lungi — astfel încât suita curăță *propria* ieșire a acestui server, nu doar fișierele importate.
+
+- **Reparare și validare a sincronizării** — impune durata minimă / maximă a cue-ului; corectează cue-urile suprapuse; aplică un decalaj minim între cue-uri; punte peste decalajele sub-prag (extinde-la-următorul); elimină cue-urile goale; îmbină cue-urile duplicate (buclele de repetare whisper); limitează la două linii; sortează + renumerotează. Plus un **raport de lint** nemodificator care semnalează viteza de citire per cue (CPS), caracterele pe linie și încălcările numărului de linii față de un profil selectabil (de ex. YouTube 42 CPL / 20 CPS, Netflix 42 / 17) — livrabilul pe care editorii îl doresc de fapt înainte de import.
+- **Re-sincronizare** — decalează / deplasează toate cue-urile; re-sincronizare pe rata de cadre (de ex. 23,976 ↔ 25).
+- **Re-fluidizare** — îmbină cue-urile scurte; împarte liniile lungi la un maxim de caractere pe linie / caractere pe secundă, echilibrând cele două linii în loc de o împărțire lacomă.
+- **Conversie de format** — convertește fișierele existente între SRT / VTT / LRC / CSV / Markdown / simplu, plus ieșire ASS/SSA (stilizată implicit), fără re-transcriere. Normalizare UTF-8 / de sfârșit de linie la scriere (satisface cerința UTF-8 a YouTube, previne mojibake la re-import).
+- **Curățare text** — găsire/înlocuire (regex opțional), eliminarea cuvintelor de umplutură dintr-o listă statică de cuvinte (nu un LLM), normalizarea capitalizării, eliminarea adnotărilor pentru persoane cu deficiențe de auz. Strict mecanic — orice necesită judecată (reparare OCR, deducerea punctuației) rămâne în afară; Claude-gazdă se ocupă de asta pe textul returnat.
+- **Formatarea etichetelor de vorbitor** — formatează schimbările de vorbitor stereo / TinyDiarize existente ca blocuri cu prefix de vorbitor.
+- **Statistici de sumar** — număr de cuvinte, durată, WPM, CPS mediu, raportul de tăcere.
+
+**Constrângeri de proiectare:**
+- TypeScript pur peste SRT / VTT / JSON pe care serverul le emite deja — fără re-transcriere, fără dependențe noi de execuție, un singur parser/serializator comun.
+- Operează doar pe fișierele de subtitrare/transcriere existente — nu invocă niciodată whisper sau ffmpeg, nu atinge niciodată audio-ul.
+- Determinist și doar bazat pe reguli — fără LLM, fără cloud, fără reparare „inteligentă". Orice necesită judecată (reparări OCR, deducerea punctuației) rămâne în afară; Claude-gazdă se ocupă de asta pe textul returnat.
+- Nedistructiv — scrie fișiere noi; nu suprascrie niciodată un fișier sursă pe loc fără confirmarea explicită a utilizatorului.
+- Trecerea de lint / validare este nemodificatoare — raportează încălcări, nu rescrie niciodată în tăcere.
+- Doar formate standard de interschimb — nu controlează niciodată interfața unui editor.
+
+**Status:** Planificat.
 
 ---
 
@@ -197,7 +243,7 @@ Neprogramat, dar pe-etos și reevaluat pe măsură ce capacitatea permite.
 ### Migrare la Bun
 Migrează runtime-ul de la Node.js la [Bun](https://bun.sh) pentru a reduce timpul de pornire la rece al serverului MCP și a elimina pasul de build `tsc` (sursa rulează direct). Retrogradat din fostul său loc v2.5.0: cu costul de reîncărcare a modelului per invocare fiind adevăratul blocaj (vezi v2.5.0 mai sus), reducerea timpului de pornire al Node este un câștig marginal, iar maturitatea Bun-pe-Windows plus o schimbare a modelului de distribuție implică risc. Merită făcut eventual ca o optimizare opțională, nu ca o prioritate.
 
-### Flux de lucru redenumire și potrivire proiect video
+### Flux de lucru de redenumire și potrivire a proiectului video
 Jumătatea mai grea a instrumentelor de proiect, odată ce Căutarea transcrierilor la nivel de proiect (v2.7.0) este livrată: potrivire fuzzy a transcrierilor clipurilor editate față de transcrierile sursă pentru a localiza punctele de origine și afișarea numelor de fișiere descriptive sugerate de Claude.
 
 **Constrângeri de proiectare:**
@@ -207,13 +253,13 @@ Jumătatea mai grea a instrumentelor de proiect, odată ce Căutarea transcrieri
 
 **Status:** Faza de proiectare.
 
-### Curățare transcrieri bazată pe reguli
+### Curățare a transcrierilor bazată pe reguli
 Post-procesare locală, deterministă — eliminarea cuvintelor de umplutură și a pornirilor false, controlată de utilizator. Cea mai valoroasă pentru utilizatorii modului de confidențialitate, unde transcrierea nu ajunge niciodată la Claude pentru curățare. Deliberat îngustă: împărțirea în paragrafe și segmentarea pe subiecte sunt lucruri pe care Claude le face deja bine pe textul returnat, iar exportul PDF/DOCX este o extindere de domeniu în generarea de documente — ambele în afara domeniului aici.
 
-**Status:** În considerare.
+**Status:** Promovată — curățarea deterministă este programată în Suita de post-procesare a subtitrărilor v3.0.0; notele privind ce este în afara domeniului (împărțirea în paragrafe, PDF/DOCX) rămân valabile.
 
 ### Diarizare vorbitori (pyannote-audio)
-Diarizare completă mono cu etichete ID vorbitor pe toată înregistrarea. Diferit de indicatorul stereo `--diarize` integrat (v2.2.0) și TinyDiarize (v2.6.0).
+Diarizare completă mono cu etichete ID de vorbitor pe toată înregistrarea. Diferit de indicatorul stereo `--diarize` integrat (v2.2.0) și TinyDiarize (v2.5.0).
 
 **Implementare:** necesită [pyannote-audio](https://github.com/pyannote/pyannote-audio) — o bibliotecă Python cu cerință de token de acces Hugging Face, o stivă de dependențe complet separată. Deprioritizat: intră în conflict cu etosul local-prioritar / zero-dependențe, iar TinyDiarize acoperă deja cazul mono zero-dependențe. Dacă este urmărit, se livrează ca un add-on avansat opțional cu propriile documente de configurare, niciodată în pachetul principal.
 
@@ -222,7 +268,7 @@ Diarizare completă mono cu etichete ID vorbitor pe toată înregistrarea. Difer
 ### Traducere în limbi non-engleze
 Indicatorul `--translate` al Whisper țintește doar engleza. Limbile țintă arbitrare necesită un API de traducere extern sau un model de traducere local.
 
-**Opțiuni luate în considerare:** LibreTranslate (auto-găzduit, local-prioritar), traducere LLM local sau documentație explicită în afara domeniului.
+**Opțiuni luate în considerare:** LibreTranslate (auto-găzduit, local-prioritar), traducere LLM local sau documentație explicită de tip în-afara-domeniului.
 
 **Status:** Amânat în așteptarea unei decizii local-prioritar vs dependență-API.
 
@@ -235,8 +281,8 @@ Funcții excluse intenționat, consemnate aici astfel încât decizia să fie ex
 ### Transcriere live din microfon — neplanificată
 Transcrierea în timp real dintr-un microfon live era anterior programată pentru v2.7.0. Eliminată deoarece intră în conflict cu designul de bază al proiectului:
 - **Nepotrivire de arhitectură:** MCP este cerere/răspuns, nu streaming. Captura live ar necesita fie interogare continuă (consumă buget API), fie un apel blocant de lungă durată care atinge garda de expirare în prim-plan din v2.4.0.
-- **Principii o-singură-instanță / minimizare-API:** returnarea segmentelor continue către Claude este un flux constant de apeluri de instrument — opusul „funcțional pentru utilizatorii planului gratuit" — iar un proces de streaming de lungă durată solicită blocarea proceselor.
-- **Dependență externă:** ar depinde de un API de streaming stabil în whisper.cpp care nu ne aparține pentru a-l programa.
+- **Principii o-singură-instanță / minimizare-API:** returnarea segmentelor continue către Claude este un flux constant de apeluri de instrument — opusul „funcțional pentru utilizatorii cu plan gratuit" — iar un proces de streaming de lungă durată solicită blocarea proceselor.
+- **Dependență externă:** ar necesita o dependență externă suplimentară.
 
 Subtitrarea live este o categorie de produs distinctă (latență scăzută, gestionarea dispozitivelor, VAD) față de un instrument de transcriere fișier/lot. Utilizatorii care au nevoie de ea sunt mai bine serviți de un instrument dedicat în timp real.
 
@@ -257,13 +303,13 @@ whisper-windows-mcp folosește licențiere duală.
 
 **Utilizare non-comercială:** MIT — gratuit pentru uz personal, educațional și non-comercial. Vezi [LICENSE](LICENSE).
 
-**Utilizare comercială:** Este necesar un acord de licență comercială separat pentru orice utilizare în afaceri, profesională sau generatoare de venituri. Vezi [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) pentru termeni și informații de contact.
+**Utilizare comercială:** Este necesară o licență comercială separată pentru orice utilizare în afaceri, profesională sau generatoare de venituri. Vezi [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) pentru termeni și informații de contact.
 
 ---
 
 ## Distribuție
 
-Disponibil pe [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai) și [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers).
+Disponibil pe [npm](https://www.npmjs.com/package/whisper-windows-mcp), [mcpservers.org](https://mcpservers.org), [Glama](https://glama.ai) și [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) (PR trimis).
 
 ---
 

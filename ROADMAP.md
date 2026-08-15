@@ -142,17 +142,14 @@ A security/robustness pass; the planned Bun migration moved to v2.5.0.
 
 **Identified for a future release:** a persistent-model path (e.g. whisper.cpp's `whisper-server`) to eliminate the model-reload cost paid on every transcription — a large throughput win for batch/archive work.
 
----
+### ✅ v2.5.0 — Persistent Model Server + TinyDiarize
 
-## Planned — v2.5.0: Persistent Model Server
-
-Keep the Whisper model resident between transcriptions instead of reloading it on every invocation.
-
-This is the single biggest throughput win available. whisper-cli is one-shot: it reloads the full model on every call, and v2.4.0 measured that reload at ~110s on a memory-constrained GPU — a fixed tax paid per file, independent of audio length. For batch and archive workloads it dominates wall-clock more than transcription itself.
-
-**Approach:** run whisper.cpp's bundled `whisper-server` (HTTP) as a single long-lived process with the model held in memory. The MCP server sends each transcription to it over localhost and gets results back without paying the reload cost again.
-
-**Reconciling with "one whisper instance at all times":** the principle is preserved, the mechanism evolves. The resident server *becomes* the single instance; the process lock changes from "never spawn a second whisper-cli" to "serialize requests against the one resident server." No concurrency is introduced.
+**Persistent model server (Phase 1).** whisper-cli is one-shot: it reloads the full model on every call — v2.4.0 measured that reload at ~110s on a memory-constrained GPU, a fixed per-file tax that dominates wall-clock on batch/archive work. v2.5.0 adds an optional resident-model mode that keeps the model in memory between transcriptions.
+- `whisper_server` tool (`start` / `stop` / `status`). The resident server *becomes* the single instance, preserving the one-whisper-instance rule: requests serialize against it, no concurrency introduced.
+- Blocking `transcribe_audio` and `transcribe_batch` route through the resident server over localhost (`127.0.0.1`) via `POST /inference`, skipping the reload cost. The foreground-timeout guard is skipped in server mode (no reload to pay).
+- `switch_model` hot-swaps the resident model via `POST /load` with no restart. `check_config` reports server state; the owned server is killed on shutdown to release VRAM.
+- One-engine / shared-VRAM rule enforced with a hard backstop in the detached-spawn path plus friendly refusals: while the server is up, background jobs, `start_batch`, `generate_subtitles`, `lrc`/`csv` output, and per-request options the HTTP API doesn't honor (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`, etc.) are refused with a "stop the server first" message rather than silently degrading.
+- Config: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (default 8571, localhost-only).
 
 **Design constraints:**
 - Explicit lifecycle: start / stop / status, with a health check. The server is never started silently as a side effect of an unrelated call.
@@ -162,21 +159,19 @@ This is the single biggest throughput win available. whisper-cli is one-shot: it
 - Privacy and consent gates are unchanged — they sit above the transcription mechanism.
 - Port selection with collision handling; clean shutdown on SIGINT/SIGTERM alongside the existing temp-file cleanup.
 
-**Status — Phase 1 ✅ implemented (pending release):** `whisper_server` tool (`start` / `stop` / `status`); blocking `transcribe_audio` and `transcribe_batch` route through the resident server over localhost (`127.0.0.1`, verified against the current whisper.cpp `whisper-server` HTTP API); `switch_model` hot-swaps the resident model via `POST /load` with no restart; the foreground-timeout guard is skipped in server mode (no reload to pay); `check_config` reports server state; the owned server is killed on shutdown to release VRAM. The one-engine / shared-VRAM rule is enforced with a hard backstop in the detached-spawn path plus friendly refusals: while the server is up, background jobs, `start_batch`, `generate_subtitles`, `lrc`/`csv` output, and per-request options the HTTP API doesn't honor (`beam_size`, `best_of`, `word_timestamps`, `diarize`, `tinydiarize`, `vad_model`, `offset_t`, `duration`, etc.) are refused with a "stop the server first" message rather than silently degrading. Config: `WHISPER_SERVER_PATH`, `WHISPER_SERVER_PORT` (default 8571, localhost-only).
-
-**Status — Phase 2 (planned):** route background/`start_batch` through the resident server. This is the larger archive/throughput win and needs the job/queue layer reworked around HTTP requests instead of detached PIDs (progress without a PID, cancellation). Re-assess after Phase 1 lands.
+**TinyDiarize.** `--tinydiarize` support with `tdrz`-enabled models. Unlike the stereo `--diarize` flag (v2.2.0), TinyDiarize marks speaker turns on **mono** recordings and needs nothing beyond the model file — no Python, no external service.
+- `tinydiarize` parameter on `transcribe_audio` and `generate_subtitles` (blocking and background modes); `--tinydiarize` threaded through both arg builders.
+- `small.en-tdrz` added to `MODEL_REGISTRY` so `download_model` can fetch it from the existing trusted Hugging Face namespaces.
 
 ---
 
-## Planned — v2.6.0: TinyDiarize (mono speaker turns, zero extra dependencies)
+## Planned — v2.6.0: Persistent Model Server — Phase 2
 
-`--tinydiarize` support with `tdrz`-enabled model variants (e.g. `ggml-small.en-tdrz.bin`). Unlike the stereo `--diarize` flag (v2.2.0), TinyDiarize marks speaker turns on **mono** recordings, and needs nothing beyond the model file — no Python, no external service.
+Route background jobs and `start_batch` through the resident server. Phase 1 (v2.5.0) covers blocking transcription only; this is the larger archive/throughput win, and needs the job/queue layer reworked around HTTP requests instead of detached PIDs — progress tracking without a PID, and HTTP-based cancellation.
 
-**Scope:**
-- Add the `tdrz` model variant(s) to `MODEL_REGISTRY` so `download_model` can fetch them from the existing trusted Hugging Face namespaces.
-- Plumb a `tinydiarize` option through `buildArgs` and `spawnDetached` so it works in blocking, background, and batch modes.
+The resident-server **design constraints** established in v2.5.0 continue to govern Phase 2 — localhost-only bind, explicit lifecycle, graceful one-shot fallback, and unchanged privacy/consent gates. Phase 2 adds the job/queue routing without relaxing any of them.
 
-**Status:** ✅ Implemented (pending release) — `tinydiarize` parameter on `transcribe_audio` and `generate_subtitles` (works in blocking and background modes), `--tinydiarize` threaded through both arg builders, and `small.en-tdrz` added to `MODEL_REGISTRY` for `download_model`. On-ethos: local-first, zero extra dependencies.
+**Status:** Planned.
 
 ---
 
@@ -188,9 +183,56 @@ A standalone tool to search a phrase or pattern across every transcript in a pro
 
 ---
 
-## Planned — v2.8.0: Enhanced Output Formats & Integration
+## Planned — v2.8.0: Editor-Importable Output & Integration Formats
 
-Extended output for downstream analysis and integration workflows. One concrete gap to close: JSON output is currently unsupported in background mode (it falls back to text). Word-level JSON for clip alignment and other integration formats to be scoped from user feedback.
+Turn transcripts into artifacts a video editor imports directly, so transcription feeds the edit instead of stopping at a text file — the core motivation for the project: making a large raw-footage archive workable for a solo creator.
+
+- **Marker CSV first** — segment starts as a marker/chapter CSV that Premiere, Resolve, and YouTube import natively. Delivers most of the "get it into my editor" value at a fraction of the cost and version-fragility of a full timeline format.
+- **Word-level timing data** — expose whisper.cpp full-token JSON (`--output-json-full` / `-ojf`) and DTW-aligned word timestamps (`--dtw <preset>`, auto-matched to the active model; presets exist for every family including `large.v3.turbo`, and apply to quantized models). This is the accurate-timing layer that word-level SRT, marker placement, and clip alignment sit on; the per-token JSON also carries confidence values for anyone who wants them. Note: `--dtw` is a **load-time/context flag** (set at model init, not per request), so it lives in the one-shot CLI path — the resident `whisper-server` `/inference` API cannot apply it per-request, consistent with the server-mode word-level refusal in v2.5.0.
+- **Close the JSON-in-background gap** — JSON currently falls back to text in background mode.
+- **FCPXML / EDL — deferred:** verbose, version-sensitive, and pulls toward editor-integration scope. Revisit only if marker CSV proves insufficient.
+
+**Scope boundary:** this generates files the editor *imports* — it does not automate the editor's UI. Standard interchange is on-ethos and dependency-light; driving the application is a separate concern.
+
+Pairs with v2.7.0: search the archive to find the moment, then hand the editor a marker file to jump straight to it.
+
+---
+
+## Planned — v2.9.0: Transcription Quality & Tuning
+
+Depth on transcription accuracy and control — all zero-dependency passthroughs of whisper.cpp flags the wrapper doesn't yet expose. Every option here is a one-shot transcription parameter: no added tool-call overhead, fully functional for free-tier users.
+
+- **VAD tuning** — the voice-activity-detection knobs (`--vad-threshold`, min-speech / min-silence / max-speech duration, speech-pad, samples-overlap). VAD is already on but not tunable; these fix the over- and under-segmentation behind most real-world quality complaints.
+- **Non-speech-token suppression** (`--suppress-nst`) — drop `[music]` / noise artifacts for cleaner transcripts.
+- **Language detection only** (`--detect-language`) — a cheap "what language is this?" probe that returns without a full transcription pass. Valuable for the multilingual audience and for routing before transcription.
+- **Robustness / decoding thresholds** — `--entropy-thold`, `--logprob-thold`, `--word-thold`, `--no-fallback`, `--temperature-inc`, `--carry-initial-prompt`, `--suppress-regex` for difficult audio.
+- **Performance knobs** — flash attention (now **default-on** in current whisper.cpp; expose the `--no-flash-attn` / `-nfa` disable path rather than treating it as opt-in), CPU-only (`--no-gpu`), audio-context size (`--audio-ctx`).
+
+**Status:** Planned.
+
+---
+
+## Planned — v3.0.0: Subtitle Post-Processing Suite
+
+A pure-TypeScript batch layer over the SRT / VTT / JSON the server already emits — no re-transcription, no new dependencies, one shared parser/serializer. Mirrors the "batch convert" chain of dedicated subtitle editors (Subtitle Edit, Aegisub), which no competing transcription MCP offers. The timing-repair pass in particular targets the defects raw Whisper output exhibits — blank cues on silence, overlapping or too-short segments, repeat-loop duplicates, over-long lines — so the suite cleans up this server's *own* output, not just imported files.
+
+- **Timing repair & validation** — enforce min / max cue duration; fix overlapping cues; apply a minimum inter-cue gap; bridge sub-threshold gaps (extend-to-next); drop empty cues; merge duplicate cues (whisper repeat-loops); cap at two lines; sort + renumber. Plus a non-mutating **lint report** that flags per-cue reading-speed (CPS), chars-per-line, and line-count violations against a selectable profile (e.g. YouTube 42 CPL / 20 CPS, Netflix 42 / 17) — the deliverable editors actually want before import.
+- **Re-timing** — offset / shift all cues; frame-rate re-time (e.g. 23.976 ↔ 25).
+- **Reflow** — merge short cues; split long lines to a max chars-per-line / chars-per-second, balancing the two lines rather than a greedy split.
+- **Format conversion** — convert existing files between SRT / VTT / LRC / CSV / Markdown / plain, plus ASS/SSA output (default-styled), without re-transcribing. UTF-8 / line-ending normalization on write (satisfies YouTube's UTF-8 requirement, prevents mojibake on re-import).
+- **Text cleanup** — find/replace (regex opt-in), filler-word removal from a static wordlist (not an LLM), casing normalization, strip hearing-impaired annotations. Strictly mechanical — anything needing judgement (OCR repair, punctuation inference) stays out; the host Claude handles that on returned text.
+- **Speaker-label formatting** — format existing stereo / TinyDiarize turns as speaker-prefixed blocks.
+- **Summary statistics** — word count, duration, WPM, average CPS, silence ratio.
+
+**Design constraints:**
+- Pure TypeScript over the SRT / VTT / JSON the server already emits — no re-transcription, no new runtime dependencies, one shared parser/serializer.
+- Operates only on existing subtitle/transcript files — never invokes whisper or ffmpeg, never touches audio.
+- Deterministic and rule-based only — no LLM, no cloud, no "smart" repair. Anything needing judgement (OCR fixes, punctuation inference) stays out; the host Claude handles that on returned text.
+- Non-destructive — writes new files; never overwrites a source file in place without explicit user confirmation.
+- The lint / validation pass is non-mutating — it reports violations, it never silently rewrites.
+- Standard interchange formats only — never drives an editor's UI.
+
+**Status:** Planned.
 
 ---
 
@@ -214,10 +256,10 @@ The heavier half of the project tooling, once Project-Wide Transcript Search (v2
 ### Rule-Based Transcript Cleanup
 Local, deterministic post-processing — filler word and false-start removal, user-controlled. Most valuable for privacy-mode users, where the transcript never reaches Claude for cleanup. Deliberately narrow: paragraph-breaking and topic segmentation are things Claude already does well on returned text, and PDF/DOCX export is scope creep into document generation — both out of scope here.
 
-**Status:** Under consideration.
+**Status:** Promoted — the deterministic cleanup is scheduled in the v3.0.0 Subtitle Post-Processing Suite; the out-of-scope notes (paragraph-breaking, PDF/DOCX) still hold.
 
 ### Speaker Diarization (pyannote-audio)
-Full mono speaker diarization with speaker ID labels across an entire recording. Distinct from the built-in stereo `--diarize` flag (v2.2.0) and TinyDiarize (v2.6.0).
+Full mono speaker diarization with speaker ID labels across an entire recording. Distinct from the built-in stereo `--diarize` flag (v2.2.0) and TinyDiarize (v2.5.0).
 
 **Implementation:** requires [pyannote-audio](https://github.com/pyannote/pyannote-audio) — a Python library with a Hugging Face access-token requirement, an entirely separate dependency stack. Deprioritized: it clashes with the local-first / zero-dependency ethos, and TinyDiarize already covers the zero-dependency mono case. If pursued, it ships as an optional advanced add-on with its own setup docs, never in the main package.
 
@@ -240,7 +282,7 @@ Features intentionally excluded, recorded here so the decision is explicit and d
 Real-time transcription from a live mic was previously slated for v2.7.0. Cut because it conflicts with the project's core design:
 - **Architecture mismatch:** MCP is request/response, not streaming. Live capture would require either continuous polling (burns API budget) or a long-blocking call that hits the v2.4.0 foreground-timeout guard.
 - **One-instance / minimize-API principles:** returning rolling segments to Claude is constant tool-call churn — the opposite of "functional for free-tier users" — and a long-lived streaming process strains the process lock.
-- **External dependency:** it would depend on a stable streaming API in whisper.cpp that isn't ours to schedule.
+- **External dependency:** it would require an additional external dependency.
 
 Live captioning is a distinct product category (low latency, device management, VAD) from a file/batch transcription tool. Users needing it are better served by a dedicated real-time tool.
 
