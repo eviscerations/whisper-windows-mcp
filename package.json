@@ -1,6 +1,7 @@
 {
   "name": "whisper-windows-mcp",
-  "version": "2.5.1",
+  "version": "2.5.2",
+  "type": "module",
   "description": "Windows-native MCP server for local audio transcription using whisper.cpp with Vulkan GPU acceleration",
   "main": "dist/index.js",
   "bin": {
@@ -9,7 +10,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsc && node --test"
+    "test": "tsc && node --test",
+    "region:check": "tsc && node test/region-check.mjs"
   },
   "keywords": [
     "mcp",

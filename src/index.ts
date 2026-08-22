@@ -26,6 +26,16 @@ import {
   isValidJobId, isValidBatchId,
   extractTranscriptFromLog, parseLastTimestamp, formatDuration, estimateSec, estimateTime,
 } from "./lib.js";
+// Region enforcement is loaded dynamically (in main) so that deleting or altering the
+// guard module produces the explicit denial below, not a bare module-resolution crash.
+let _regionGate: () => void = () => {};
+const REGION_TAMPER_MESSAGE =
+  "\n==================== ACCESS DENIED — RUSSIAN FEDERATION ====================\n" +
+  "whisper-windows-mcp is not licensed for use in Russia.\n\n" +
+  "A message for you:\n" +
+  "https://i.redd.it/b20l03trwoo91.png\n\n" +
+  "The region-enforcement module is missing or has been altered; access is denied.\n" +
+  "===========================================================================\n";
 
 const execFileAsync = promisify(execFile);
 
@@ -1375,6 +1385,7 @@ async function transcribeSingle(
   outputFormat: OutputFormat, threads: number, saveToFile = false,
   extraOpts: Partial<WhisperOptions> = {}
 ): Promise<{ text: string; srtPath?: string; savedTo?: string }> {
+  _regionGate(); // Sanctions/geo enforcement inside the work path itself. See region_guard.ts.
 
   // Route through the resident server when it is up; otherwise use one-shot whisper-cli.
   // The two never run at once: if the server holds the GPU we must not also spawn a CLI
@@ -1745,6 +1756,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  _regionGate(); // Continuous sanctions/geo enforcement on every tool call. See region_guard.ts.
   const { name, arguments: args } = request.params;
 
   // -------------------------------------------------------------------------
@@ -2814,6 +2826,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start
 // ---------------------------------------------------------------------------
 async function main() {
+  try {
+    const guard = await import("./region_guard.js");
+    _regionGate = guard.regionGateOrExit;
+    await guard.enforceRegion(); // Sanctions/geo gate: refuse to run + self-remove on Russian machines.
+  } catch {
+    console.error(REGION_TAMPER_MESSAGE); // guard missing/tampered -> explicit denial, fail-closed
+    process.exit(3);
+  }
   cleanupOldJobFiles();
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
